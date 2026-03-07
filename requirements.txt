@@ -1,0 +1,15 @@
+streamlit
+langchain
+langgraph
+langchain-openai
+langchain-community
+langchain_chroma 
+chromadb
+pandas
+openpyxl
+pypdf
+python-dotenv
+tiktoken
+requests
+langchain-huggingface
+sentence-transformers

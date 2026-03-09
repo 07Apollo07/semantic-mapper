@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-from logic import process_pdf, get_excel_sheets, process_excel_sheets, split_documents, VectorStoreManager
+from logic import process_pdf, get_excel_sheets, process_excel_sheets, split_documents, VectorStoreManager, excel_col_to_idx
 from agent import create_agent
 from ui import sidebar_config, step_indicator
 
@@ -18,6 +18,10 @@ if "mapping_df" not in st.session_state:
     st.session_state.mapping_df = None
 if "mapping_config" not in st.session_state:
     st.session_state.mapping_config = {}
+if "mapping_inputs" not in st.session_state:
+    st.session_state.mapping_inputs = {}
+if "show_mapping_preview" not in st.session_state:
+    st.session_state.show_mapping_preview = False
 if "results" not in st.session_state:
     st.session_state.results = []
 
@@ -201,12 +205,12 @@ elif st.session_state.step == 2:
     if not st.session_state.kb_inventory:
         st.warning("⚠️ Please upload and submit a Knowledge Base in Step 1 first.")
     
-    mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"])
+    mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"], key="map_uploader")
     
     if mapping_file:
         file_bytes = mapping_file.read()
         sheets = get_excel_sheets(file_bytes)
-        selected_map_sheet = st.selectbox("Select Mapping Sheet", sheets)
+        selected_map_sheet = st.selectbox("Select Mapping Sheet", sheets, key="map_sheet_selector")
         
         df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_map_sheet)
         st.session_state.mapping_df = df
@@ -219,120 +223,147 @@ elif st.session_state.step == 2:
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Source Fields")
-            s_subj = st.text_input("Subject Area Column", placeholder="e.g. SubjectArea")
-            s_db = st.text_input("DB Name Column", placeholder="e.g. SourceDB")
-            s_tbl = st.text_input("Table Name Column", placeholder="e.g. SourceTable")
-            s_col = st.text_input("Column Name Column", placeholder="e.g. SourceColumn")
-            s_type = st.text_input("Datatype Column", placeholder="e.g. SourceType")
+            # Using keys ensures persistence across reruns/steps
+            s_subj = st.text_input("Subject Area Column", placeholder="e.g. A", key="map_s_subj")
+            s_db = st.text_input("DB Name Column", placeholder="e.g. B", key="map_s_db")
+            s_tbl = st.text_input("Table Name Column", placeholder="e.g. C", key="map_s_tbl")
+            s_col = st.text_input("Column Name Column", placeholder="e.g. D", key="map_s_col")
+            s_type = st.text_input("Datatype Column", placeholder="e.g. E", key="map_s_type")
             
         with col2:
             st.markdown("### Target Fields")
-            t_subj = st.text_input("Target Subject Area", placeholder="e.g. TargetSubject")
-            t_db = st.text_input("Target DB Name", placeholder="e.g. TargetDB")
-            t_tbl = st.text_input("Target Table Name", placeholder="e.g. TargetTable")
-            t_col = st.text_input("Target Column Name", placeholder="e.g. TargetColumn")
-            t_type = st.text_input("Target Datatype", placeholder="e.g. TargetType")
+            t_subj = st.text_input("Target Subject Area", placeholder="e.g. F", key="map_t_subj")
+            t_db = st.text_input("Target DB Name", placeholder="e.g. G", key="map_t_db")
+            t_tbl = st.text_input("Target Table Name", placeholder="e.g. H", key="map_t_tbl")
+            t_col = st.text_input("Target Column Name", placeholder="e.g. I", key="map_t_col")
+            t_type = st.text_input("Target Datatype", placeholder="e.g. J", key="map_t_type")
 
-        row_range = st.slider("Select Row Range to Process", 1, len(df), (1, min(10, len(df))))
+        st.subheader("Row Range")
+        c_r1, c_r2 = st.columns(2)
+        # Replacing slider with number inputs for better control
+        r_start = c_r1.number_input("Start Row", min_value=1, max_value=len(df), value=1, key="map_r_start")
+        r_end = c_r2.number_input("End Row", min_value=1, max_value=len(df), value=min(10, len(df)), key="map_r_end")
 
         if st.button("Preview Mapping"):
-            st.session_state.mapping_config = {
-                "source": {"subj": s_subj, "db": s_db, "tbl": s_tbl, "col": s_col, "type": s_type},
-                "target": {"subj": t_subj, "db": t_db, "tbl": t_tbl, "col": t_col, "type": t_type},
-                "range": row_range
-            }
-            st.session_state.step = 3
+            st.session_state.show_mapping_preview = True
             st.rerun()
 
-# Step 3: Preview & Run
-elif st.session_state.step == 3:
-    st.header("Preview & Process")
-    
-    if st.session_state.mapping_df is None or not st.session_state.mapping_config:
-        st.warning("⚠️ Please configure the mapping in Step 2 first.")
-    else:
+    # Preview Section (Appears below inputs)
+    if st.session_state.get("show_mapping_preview") and st.session_state.mapping_df is not None:
+        st.divider()
+        st.header("Preview & Process")
+        
+        # Save config from persistent keys
+        st.session_state.mapping_config = {
+            "source": {
+                "subj": st.session_state.map_s_subj, 
+                "db": st.session_state.map_s_db, 
+                "tbl": st.session_state.map_s_tbl, 
+                "col": st.session_state.map_s_col, 
+                "type": st.session_state.map_s_type
+            },
+            "target": {
+                "subj": st.session_state.map_t_subj, 
+                "db": st.session_state.map_t_db, 
+                "tbl": st.session_state.map_t_tbl, 
+                "col": st.session_state.map_t_col, 
+                "type": st.session_state.map_t_type
+            },
+            "range": (st.session_state.map_r_start, st.session_state.map_r_end)
+        }
+        
         df = st.session_state.mapping_df
         conf = st.session_state.mapping_config
         r_start, r_end = conf["range"]
         
-        # Simple helper to get column value by name or index
         def get_val(row, col_identifier):
             if not col_identifier: return "N/A"
-            try:
-                return row[col_identifier]
-            except KeyError:
-                return "N/A"
+            # 1. Try as direct column name
+            if col_identifier in row.index:
+                return str(row[col_identifier])
+            
+            # 2. Try as Excel letter (A, B, C...)
+            idx = excel_col_to_idx(col_identifier)
+            if idx is not None and 0 <= idx < len(row):
+                return str(row.iloc[idx])
+                
+            return "N/A"
 
         processed_rows = []
-        for idx in range(r_start-1, r_end):
-            row = df.iloc[idx]
-            processed_rows.append({
-                "Source": f"{get_val(row, conf['source']['db'])}.{get_val(row, conf['source']['tbl'])}.{get_val(row, conf['source']['col'])}",
-                "Target": f"{get_val(row, conf['target']['db'])}.{get_val(row, conf['target']['tbl'])}.{get_val(row, conf['target']['col'])}"
-            })
-        
-        st.table(processed_rows)
-        
-        if st.button("Generate Mappings"):
-            results = []
-            progress_bar = st.progress(0)
-            
-            # Get LLM config from session state
-            base_url = st.session_state.get("base_url")
-            api_key = st.session_state.get("api_key")
-            model_name = st.session_state.get("selected_model", "gpt-4o")
-            
-            agent = create_agent(
-                st.session_state.v_manager.get_retriever(),
-                model_name=model_name,
-                api_key=api_key,
-                base_url=base_url
-            )
-            
-            for i, idx in enumerate(range(r_start-1, r_end)):
+        if r_start > r_end:
+            st.error("Start Row must be less than or equal to End Row.")
+        else:
+            for idx in range(r_start-1, r_end):
+                if idx >= len(df): break
                 row = df.iloc[idx]
-                source_info = {
-                    "subject_area": get_val(row, conf['source']['subj']),
-                    "db_name": get_val(row, conf['source']['db']),
-                    "table_name": get_val(row, conf['source']['tbl']),
-                    "column_name": get_val(row, conf['source']['col']),
-                    "datatype": get_val(row, conf['source']['type'])
-                }
-                target_info = {
-                    "subject_area": get_val(row, conf['target']['subj']),
-                    "db_name": get_val(row, conf['target']['db']),
-                    "table_name": get_val(row, conf['target']['tbl']),
-                    "column_name": get_val(row, conf['target']['col']),
-                    "datatype": get_val(row, conf['target']['type'])
-                }
+                processed_rows.append({
+                    "Source": f"{get_val(row, conf['source']['db'])}.{get_val(row, conf['source']['tbl'])}.{get_val(row, conf['source']['col'])}",
+                    "Target": f"{get_val(row, conf['target']['db'])}.{get_val(row, conf['target']['tbl'])}.{get_val(row, conf['target']['col'])}"
+                })
+            
+            st.table(processed_rows)
+            
+            if st.button("Generate Mappings", type="primary"):
+                results = []
+                progress_bar = st.progress(0)
                 
-                with st.spinner(f"Processing row {idx+1}..."):
-                    res = agent.invoke({
-                        "source_info": source_info,
-                        "target_info": target_info,
-                        "context": "",
-                        "transformation_type": "",
-                        "transformation_logic": "",
-                        "reasoning": ""
-                    })
-                    results.append({
-                        "row_idx": idx + 1,
-                        "source_info": source_info,
-                        "target_info": target_info,
-                        **res
-                    })
-                progress_bar.progress((i + 1) / (r_end - r_start + 1))
+                base_url = st.session_state.get("base_url")
+                api_key = st.session_state.get("api_key")
+                model_name = st.session_state.get("selected_model", "gpt-4o")
                 
-            st.session_state.results = results
-            st.session_state.step = 4
-            st.rerun()
+                agent = create_agent(
+                    st.session_state.v_manager.get_retriever(),
+                    model_name=model_name,
+                    api_key=api_key,
+                    base_url=base_url
+                )
+                
+                total_rows = r_end - r_start + 1
+                for i, idx in enumerate(range(r_start-1, r_end)):
+                    if idx >= len(df): break
+                    row = df.iloc[idx]
+                    source_info = {
+                        "subject_area": get_val(row, conf['source']['subj']),
+                        "db_name": get_val(row, conf['source']['db']),
+                        "table_name": get_val(row, conf['source']['tbl']),
+                        "column_name": get_val(row, conf['source']['col']),
+                        "datatype": get_val(row, conf['source']['type'])
+                    }
+                    target_info = {
+                        "subject_area": get_val(row, conf['target']['subj']),
+                        "db_name": get_val(row, conf['target']['db']),
+                        "table_name": get_val(row, conf['target']['tbl']),
+                        "column_name": get_val(row, conf['target']['col']),
+                        "datatype": get_val(row, conf['target']['type'])
+                    }
+                    
+                    with st.spinner(f"Processing row {idx+1}..."):
+                        res = agent.invoke({
+                            "source_info": source_info,
+                            "target_info": target_info,
+                            "context": "",
+                            "transformation_type": "",
+                            "transformation_logic": "",
+                            "reasoning": ""
+                        })
+                        results.append({
+                            "row_idx": idx + 1,
+                            "source_info": source_info,
+                            "target_info": target_info,
+                            **res
+                        })
+                    progress_bar.progress((i + 1) / total_rows)
+                    
+                st.session_state.results = results
+                st.session_state.step = 3 # Move to Results
+                st.rerun()
 
-# Step 4: Results
-elif st.session_state.step == 4:
+# Step 3: Results
+elif st.session_state.step == 3:
     st.header("Transformation Results")
     
     if not st.session_state.results:
-        st.warning("⚠️ No results generated yet. Please run the generation in Step 3.")
+        st.warning("⚠️ No results generated yet. Please run the generation in Step 2.")
     else:
         results = st.session_state.results
         

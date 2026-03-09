@@ -59,7 +59,7 @@ def sidebar_config():
         st.info("Ensure you have uploaded the Knowledge Base before submitting the mapping.")
 
 def step_indicator(current_step):
-    steps = ["1. Knowledge Base", "2. Mapping Config", "3. Preview & Run", "4. Results"]
+    steps = ["1. Knowledge Base", "2. Mapping & Preview", "3. Results"]
     cols = st.columns(len(steps))
     for i, step in enumerate(steps):
         if i + 1 == current_step:

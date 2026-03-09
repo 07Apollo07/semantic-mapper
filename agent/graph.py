@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Dict, Any, Literal
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -6,6 +7,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Define the structured output model
+class TransformationOutput(BaseModel):
+    transformation_type: str = Field(description="The category of transformation, e.g., 1:1 Mapping, Join, Aggregation, Formula, Lookup.")
+    transformation_logic: str = Field(description="The specific SQL, pseudo-code, or logic for the mapping.")
+    reasoning: str = Field(description="Explanation of why this mapping was chosen, citing evidence from the knowledge base context.")
 
 # Define the state for the graph
 class AgentState(TypedDict):
@@ -20,40 +27,43 @@ class AgentState(TypedDict):
 def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
     """Creates the LangGraph agent."""
     
-    # Initialize LLM with custom config
-    # base_url for LangChain ChatOpenAI expects the /v1 suffix usually if it's a proxy, 
-    # but the tool logic/model_fetcher.py might be providing the root. 
-    # ChatOpenAI's base_url parameter typically needs the full path to the endpoint if it's not OpenAI.
-    
-    llm_kwargs = {
-        "model": model_name,
-        "temperature": 0,
-    }
-    if api_key:
-        llm_kwargs["api_key"] = api_key
-    if base_url:
-        # langchain-openai expects base_url to include /v1 for most compatible APIs
-        llm_kwargs["base_url"] = f"{base_url.rstrip('/')}/v1"
-        
-    llm = ChatOpenAI(**llm_kwargs)
+    # Initialize the LLM with custom config
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=0.2,
+        api_key=api_key if api_key and api_key.strip() != "" else "not-needed",
+        base_url=f"{base_url.rstrip('/')}/v1" if base_url else None
+    )
+
+    # Wrap LLM with structured output
+    structured_llm = llm.with_structured_output(TransformationOutput)
 
     def retrieve_context(state: AgentState):
         """Retrieves relevant context from the vector store."""
-        query = f"Source: {state['source_info']} | Target: {state['target_info']}"
+        s = state['source_info']
+        t = state['target_info']
+        
+        query = f"Source: {s.get('column_name')} in {s.get('table_name')} | Target: {t.get('column_name')} in {t.get('table_name')}"
+        print(f"🔍 [Agent] Retrieving context for: {query}")
+        
         docs = retriever.invoke(query)
         context = "\n\n".join([doc.page_content for doc in docs])
+        
+        if context:
+            print(f"✅ [Agent] Found {len(docs)} relevant documents.")
+        else:
+            print("⚠️ [Agent] No relevant context found.")
+            
         return {"context": context}
 
     def generate_transformation(state: AgentState):
         """Generates the transformation logic based on context and input."""
+        print(f"🚀 [Agent] Generating transformation for {state['source_info'].get('column_name')} -> {state['target_info'].get('column_name')}...")
+        
         system_prompt = """You are a Semantic Mapper Agent. Your job is to analyze a source and target mapping and provide the transformation logic.
         Use the provided context from the knowledge base to inform your mapping.
         
-        Output format:
-        Transformation Type: [e.g., 1:1 Mapping, Join, Aggregation, Formula, Lookup, etc.]
-        Transformation Logic: [The SQL or pseudo-code logic]
-        Reasoning: [Explanation of why this mapping was chosen based on the knowledge base]
-        """
+        If a field is 'N/A', it means the information was not provided."""
         
         user_content = f"""
         Source Data:
@@ -71,7 +81,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
         - Datatype: {state['target_info'].get('datatype')}
         
         Knowledge Base Context:
-        {state['context']}
+        {state['context'] if state['context'] else "No context available."}
         
         User Feedback/Correction:
         {state.get('feedback', 'None')}
@@ -82,31 +92,15 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
             HumanMessage(content=user_content)
         ]
         
-        response = llm.invoke(messages)
-        content = response.content
+        # Invoke LLM with structured output
+        response = structured_llm.invoke(messages)
         
-        # Simple parsing logic (can be improved with Structured Output)
-        lines = content.split('\n')
-        trans_type = "N/A"
-        logic = "N/A"
-        reasoning = "N/A"
+        print(f"✨ [Agent] Transformation generated: {response.transformation_type}")
         
-        for line in lines:
-            if line.lower().startswith("transformation type:"):
-                trans_type = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("transformation logic:"):
-                logic = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("reasoning:"):
-                reasoning = line.split(":", 1)[1].strip()
-        
-        # If standard parsing fails, put full response in reasoning
-        if trans_type == "N/A" and logic == "N/A":
-            reasoning = content
-            
         return {
-            "transformation_type": trans_type,
-            "transformation_logic": logic,
-            "reasoning": reasoning
+            "transformation_type": response.transformation_type,
+            "transformation_logic": response.transformation_logic,
+            "reasoning": response.reasoning
         }
 
     # Build the graph

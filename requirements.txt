@@ -13,3 +13,4 @@ tiktoken
 requests
 langchain-huggingface
 sentence-transformers
+streamlit_js

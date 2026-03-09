@@ -32,6 +32,34 @@ class VectorStoreManager:
         )
         return self.vector_store
 
+    def add_documents(self, documents):
+        """Adds documents to the existing vector store."""
+        if self.vector_store is None:
+            return self.initialize_store(documents)
+        
+        self.vector_store.add_documents(documents)
+        return self.vector_store
+
+    def remove_document(self, source_name, sheet_name=None):
+        """Removes documents matching a specific source filename (and optional sheet name) from the store."""
+        if self.vector_store:
+            try:
+                where_clause = {"source": source_name}
+                if sheet_name:
+                    where_clause = {
+                        "$and": [
+                            {"source": source_name},
+                            {"sheet": sheet_name}
+                        ]
+                    }
+                
+                self.vector_store._collection.delete(where=where_clause)
+                return True
+            except Exception as e:
+                print(f"Error removing {source_name} (sheet: {sheet_name}): {e}")
+                return False
+        return False
+
     def get_retriever(self, k=5):
         """Returns a retriever for the vector store."""
         if self.vector_store is None:

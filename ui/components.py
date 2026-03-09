@@ -21,6 +21,7 @@ def sidebar_config():
                 with st.spinner("Fetching models..."):
                     models = fetch_models(base_url, api_key)
                     if models:
+                        print(models)
                         st.session_state["available_models"] = models
                         st.success(f"Fetched {len(models)} models")
                     else:
@@ -62,9 +63,11 @@ def step_indicator(current_step):
     cols = st.columns(len(steps))
     for i, step in enumerate(steps):
         if i + 1 == current_step:
-            cols[i].markdown(f"**{step}**")
+            cols[i].button(step, key=f"step_{i+1}", use_container_width=True, type="primary")
         else:
-            cols[i].markdown(f"<span style='color: grey;'>{step}</span>", unsafe_allow_html=True)
+            if cols[i].button(step, key=f"step_{i+1}", use_container_width=True):
+                st.session_state.step = i + 1
+                st.rerun()
     st.divider()
 
 def display_mapping_row(row_idx, row_data, on_regenerate):

@@ -24,9 +24,25 @@ def fetch_models(base_url, api_key):
         # OpenAI style: { "data": [ {"id": "model-id", ...}, ... ] }
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
             return [model["id"] for model in data["data"] if "id" in model]
+        
+        # LM Studio / Local style with 'models' key
+        elif isinstance(data, dict) and "models" in data and isinstance(data["models"], list):
+            models = []
+            for m in data["models"]:
+                if not isinstance(m, dict):
+                    continue
+                # Skip embedding models if we are looking for LLMs
+                if m.get("type") == "embedding":
+                    continue
+                model_id = m.get("key") or m.get("id") or m.get("display_name")
+                if model_id:
+                    models.append(model_id)
+            return models
+
         # Fallback for some local providers returning a list directly
         elif isinstance(data, list):
             return [model.get("id", model) if isinstance(model, dict) else model for model in data]
+        
         return []
             
     except Exception as e:

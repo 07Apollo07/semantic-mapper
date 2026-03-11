@@ -18,6 +18,7 @@ class TransformationOutput(BaseModel):
 class AgentState(TypedDict):
     source_info: Dict[str, Any]
     target_info: Dict[str, Any]
+    transformation_specs: Dict[str, Any]
     context: str
     transformation_type: str
     transformation_logic: str
@@ -74,6 +75,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         2. If there is a comma between source columns, they most probably join together, but use common sense.
         3. This is a mapping document; do NOT use any WHERE clause in the query.
         4. Use the provided context from the knowledge base to inform your mapping.
+        5. If provided, use the Transformation Specs (Type and Condition) as strong hints or requirements for the logic.
         """
         
         user_content = f"""
@@ -92,6 +94,10 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         - Table: {state['target_info'].get('table_name')}
         - Column: {state['target_info'].get('column_name')}
         - Datatype: {state['target_info'].get('datatype')}
+        
+        Transformation Specs (from mapping document):
+        - Provided Type: {state['transformation_specs'].get('type', 'N/A')}
+        - Provided Condition: {state['transformation_specs'].get('condition', 'N/A')}
         
         Knowledge Base Context:
         {state['context'] if state['context'] else "No context available."}

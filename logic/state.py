@@ -16,6 +16,7 @@ class AppState:
         "base_url", "api_key", "selected_model", "available_models",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
+        "map_trans_type", "map_trans_cond",
         "map_r_start", "map_r_end", "map_sheet_selector"
     ]
 
@@ -47,6 +48,7 @@ class AppState:
             "available_models": [],
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
+            "map_trans_type": "", "map_trans_cond": "",
             "map_r_start": 1,
             "map_r_end": 10
         }

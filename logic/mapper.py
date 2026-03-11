@@ -73,12 +73,18 @@ class MappingEngine:
                 "datatype": self.get_cell_value(row, conf['target']['type'])
             }
             
+            transformation_specs = {
+                "type": self.get_cell_value(row, conf.get('transformation', {}).get('type')),
+                "condition": self.get_cell_value(row, conf.get('transformation', {}).get('cond'))
+            }
+            
             self._log(f"Processing Row {idx+1}: {source_info['column_name']} -> {target_info['column_name']}")
             
             try:
                 res = self.agent.invoke({
                     "source_info": source_info,
                     "target_info": target_info,
+                    "transformation_specs": transformation_specs,
                     "context": "",
                     "transformation_type": "",
                     "transformation_logic": "",

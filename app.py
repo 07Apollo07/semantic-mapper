@@ -203,6 +203,11 @@ elif state.step == 2:
             t_col = st.text_input("Target Column Name", value=st.session_state.map_t_col, placeholder="e.g. I", key="map_t_col")
             t_type = st.text_input("Target Datatype", value=st.session_state.map_t_type, placeholder="e.g. J", key="map_t_type")
 
+        st.subheader("Transformation Specs")
+        c_tr1, c_tr2 = st.columns(2)
+        tr_type = c_tr1.text_input("Transf. Type Column", value=st.session_state.map_trans_type, placeholder="e.g. K", key="map_trans_type")
+        tr_cond = c_tr2.text_input("Transf. Condition Column", value=st.session_state.map_trans_cond, placeholder="e.g. L", key="map_trans_cond")
+
         st.subheader("Row Range")
         c_r1, c_r2 = st.columns(2)
         r_start = c_r1.number_input("Start Row", min_value=1, max_value=len(df), value=int(st.session_state.map_r_start), key="map_r_start")
@@ -223,6 +228,7 @@ elif state.step == 2:
         # Default variables to avoid NameErrors
         s_subj = s_db = s_tbl = s_col = s_type = ""
         t_subj = t_db = t_tbl = t_col = t_type = ""
+        tr_type = tr_cond = ""
         r_start = 1
         r_end = 1
 
@@ -236,6 +242,7 @@ elif state.step == 2:
         state.mapping_config = {
             "source": {"subj": s_subj, "db": s_db, "tbl": s_tbl, "col": s_col, "type": s_type},
             "target": {"subj": t_subj, "db": t_db, "tbl": t_tbl, "col": t_col, "type": t_type},
+            "transformation": {"type": tr_type, "cond": tr_cond},
             "range": (r_start, r_end)
         }
         
@@ -243,7 +250,7 @@ elif state.step == 2:
         
         # Resolve column indices from identifiers
         selected_indices = []
-        for ident in [s_subj, s_db, s_tbl, s_col, s_type, t_subj, t_db, t_tbl, t_col, t_type]:
+        for ident in [s_subj, s_db, s_tbl, s_col, s_type, t_subj, t_db, t_tbl, t_col, t_type, tr_type, tr_cond]:
             if not ident: continue
             if ident in state.mapping_df.columns:
                 selected_indices.append(state.mapping_df.columns.get_loc(ident))
@@ -282,9 +289,9 @@ elif state.step == 2:
             st.rerun()
 
     # Always show logs at the bottom of Step 2 if generation has started or there are logs
-    if state.logs:
-        st.divider()
-        display_logs(state, height=300, key_prefix="step2")
+    # if state.logs:
+    st.divider()
+    display_logs(state, height=300, key_prefix="step2")
 
 # Step 3: Results
 elif state.step == 3:

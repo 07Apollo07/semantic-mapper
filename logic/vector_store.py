@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class VectorStoreManager:
-    def __init__(self, model_name="sentence-transformers/all-mpnet-base-v2"):
+    def __init__(self, model_name="Snowflake/snowflake-arctic-embed-s"):
         self.model_name = model_name
         self.embeddings = None
         self.vector_store = None

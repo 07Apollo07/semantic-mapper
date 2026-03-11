@@ -10,9 +10,9 @@ load_dotenv()
 
 # Define the structured output model
 class TransformationOutput(BaseModel):
-    transformation_type: str = Field(description="The category of transformation, e.g., 1:1 Mapping, Join, Aggregation, Formula, Lookup.")
-    transformation_logic: str = Field(description="The specific SQL, pseudo-code, or logic for the mapping.")
-    reasoning: str = Field(description="Explanation of why this mapping was chosen, citing evidence from the knowledge base context.")
+    transformation_type: str = Field(description="Type of transformation: e.g., 1:1 mapping, rename, Left-Join, Right join, Outer Join, Inner Join, aggregation etc.")
+    transformation_logic: str = Field(description="The complete single-line SQL transforming source column(s) to the target semantic column.")
+    reasoning: str = Field(description="Short explanation why this transformation is needed, citing evidence from context.")
 
 # Define the state for the graph
 class AgentState(TypedDict):
@@ -24,9 +24,14 @@ class AgentState(TypedDict):
     reasoning: str
     feedback: str # Optional feedback for interactive correction
 
-def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
+def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, log_callback=None):
     """Creates the LangGraph agent."""
     
+    def _log(msg):
+        if log_callback:
+            log_callback(msg)
+        print(msg) # Still print to console for safety
+
     # Initialize the LLM with custom config
     llm = ChatOpenAI(
         model=model_name,
@@ -44,28 +49,36 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
         t = state['target_info']
         
         query = f"Source: {s.get('column_name')} in {s.get('table_name')} | Target: {t.get('column_name')} in {t.get('table_name')}"
-        print(f"🔍 [Agent] Retrieving context for: {query}")
+        _log(f"🔍 [Retriever] Query: {query}")
         
         docs = retriever.invoke(query)
         context = "\n\n".join([doc.page_content for doc in docs])
         
         if context:
-            print(f"✅ [Agent] Found {len(docs)} relevant documents.")
+            _log(f"✅ [Retriever] Found {len(docs)} relevant context snippets.")
+            _log(f"📄 [Retriever] Context preview: {context[:200]}...")
         else:
-            print("⚠️ [Agent] No relevant context found.")
+            _log("⚠️ [Retriever] No relevant context found.")
             
         return {"context": context}
 
     def generate_transformation(state: AgentState):
         """Generates the transformation logic based on context and input."""
-        print(f"🚀 [Agent] Generating transformation for {state['source_info'].get('column_name')} -> {state['target_info'].get('column_name')}...")
+        _log(f"🚀 [LLM] Generating SQL transformation for {state['source_info'].get('column_name')} -> {state['target_info'].get('column_name')}...")
         
-        system_prompt = """You are a Semantic Mapper Agent. Your job is to analyze a source and target mapping and provide the transformation logic.
-        Use the provided context from the knowledge base to inform your mapping.
+        system_prompt = """You are an expert SQL generator. Your job is to analyze source and target mappings and provide the transformation logic.
+        Return a single-line SQL statement that transforms the source column(s) to the target semantic column.
         
-        If a field is 'N/A', it means the information was not provided."""
+        Important Guidelines:
+        1. Decide the appropriate transformation type (rename, 1:1 mapping, join, aggregation, etc.).
+        2. If there is a comma between source columns, they most probably join together, but use common sense.
+        3. This is a mapping document; do NOT use any WHERE clause in the query.
+        4. Use the provided context from the knowledge base to inform your mapping.
+        """
         
         user_content = f"""
+        Transform source column into semantic column.
+        
         Source Data:
         - Subject Area: {state['source_info'].get('subject_area')}
         - Database: {state['source_info'].get('db_name')}
@@ -73,7 +86,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
         - Column: {state['source_info'].get('column_name')}
         - Datatype: {state['source_info'].get('datatype')}
         
-        Target Data:
+        Target (Semantic) Data:
         - Subject Area: {state['target_info'].get('subject_area')}
         - Database: {state['target_info'].get('db_name')}
         - Table: {state['target_info'].get('table_name')}
@@ -85,6 +98,8 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
         
         User Feedback/Correction:
         {state.get('feedback', 'None')}
+        
+        Decide the appropriate transformation type and return the SQL logic.
         """
         
         messages = [
@@ -95,7 +110,8 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None):
         # Invoke LLM with structured output
         response = structured_llm.invoke(messages)
         
-        print(f"✨ [Agent] Transformation generated: {response.transformation_type}")
+        _log(f"✨ [LLM] Result: {response.transformation_type}")
+        _log(f"📝 [LLM] Logic: {response.transformation_logic}")
         
         return {
             "transformation_type": response.transformation_type,

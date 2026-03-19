@@ -49,9 +49,29 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         s = state['source_info']
         t = state['target_info']
         
-        query = f"Source: {s.get('column_name')} in {s.get('table_name')} | Target: {t.get('column_name')} in {t.get('table_name')}"
-        _log("*" * 40)
+        # Build a richer query including DB and Table names
+        query_parts = []
+        
+        def add_parts(prefix, val):
+            if not val or val == "N/A": return
+            # Split by comma to handle multiple entries
+            sub_parts = [p.strip() for p in str(val).split(',') if p.strip()]
+            for p in sub_parts:
+                query_parts.append(f"{prefix}: {p}")
 
+        add_parts("Source DB", s.get('db_name'))
+        add_parts("Source Table", s.get('table_name'))
+        add_parts("Source Column", s.get('column_name'))
+        
+        add_parts("Target DB", t.get('db_name'))
+        add_parts("Target Table", t.get('table_name'))
+        add_parts("Target Column", t.get('column_name'))
+        
+        query = " | ".join(query_parts)
+        if not query:
+            query = "No specific source/target info provided."
+
+        _log("*" * 40)
         _log(f"🔍 [Retriever] Query: {query}")
         
         docs = retriever.invoke(query)
@@ -59,7 +79,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         
         if context:
             _log(f"✅ [Retriever] Found {len(docs)} relevant context snippets.")
-            _log(f"📄 [Retriever] Context preview: {context}...")
+            _log(f"📄 [Retriever] Context preview: {context[:200]}...")
         else:
             _log("⚠️ [Retriever] No relevant context found.")
             
@@ -74,10 +94,12 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         
         Important Guidelines:
         1. Decide the appropriate transformation type (rename, 1:1 mapping, join, aggregation, etc.).
-        2. If there is a comma between source columns, they most probably join together, but use common sense.
-        3. This is a mapping document; do NOT use any WHERE clause in the query.
-        4. Use the provided context from the knowledge base to inform your mapping.
-        5. If provided, use the Transformation Specs (Type and Condition) as strong hints or requirements for the logic.
+        2. If there are multiple source databases or tables mentioned, they most probably join together. 
+        3. If there are multiple source columns, determine how they relate (e.g., concatenation, arithmetic, or join keys).
+        4. This is a mapping document; do NOT use any WHERE clause in the query.
+        5. Use the provided context from the knowledge base to inform your mapping.
+        6. If provided, use the Transformation Specs (Type and Condition) as strong hints or requirements for the logic.
+        7. If multiple databases are provided (e.g. "accounts, Task"), use them to qualify your tables if necessary or to understand the scope.
         """
         
         user_content = f"""

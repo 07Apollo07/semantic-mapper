@@ -342,14 +342,26 @@ else:
     with st.expander("🔍 Filter Results", expanded=False):
         c1, c2, c3 = st.columns(3)
         
-        # Extract unique values from results
-        all_src_db = sorted(list(set(r['source_info']['db_name'] for r in state.results)))
-        all_src_tbl = sorted(list(set(r['source_info']['table_name'] for r in state.results)))
-        all_src_col = sorted(list(set(r['source_info']['column_name'] for r in state.results)))
+        # Extract unique values from results, handling multiple comma-separated values
+        def get_unique_values(key_path):
+            vals = set()
+            for r in state.results:
+                raw_val = r
+                for k in key_path:
+                    raw_val = raw_val.get(k, "")
+                if not raw_val or raw_val == "N/A": continue
+                # Split by comma and strip
+                parts = [p.strip() for p in str(raw_val).split(',') if p.strip()]
+                vals.update(parts)
+            return sorted(list(vals))
+
+        all_src_db = get_unique_values(['source_info', 'db_name'])
+        all_src_tbl = get_unique_values(['source_info', 'table_name'])
+        all_src_col = get_unique_values(['source_info', 'column_name'])
         
-        all_tgt_db = sorted(list(set(r['target_info']['db_name'] for r in state.results)))
-        all_tgt_tbl = sorted(list(set(r['target_info']['table_name'] for r in state.results)))
-        all_tgt_col = sorted(list(set(r['target_info']['column_name'] for r in state.results)))
+        all_tgt_db = get_unique_values(['target_info', 'db_name'])
+        all_tgt_tbl = get_unique_values(['target_info', 'table_name'])
+        all_tgt_col = get_unique_values(['target_info', 'column_name'])
 
         f_src_db = c1.multiselect("Source DB", all_src_db)
         f_src_tbl = c2.multiselect("Source Table", all_src_tbl)
@@ -361,13 +373,19 @@ else:
         f_tgt_col = c6.multiselect("Target Column", all_tgt_col)
 
     # 2. Filter logic
+    def matches_filter(val, filter_list):
+        if not filter_list: return True
+        if not val or val == "N/A": return False
+        parts = [p.strip() for p in str(val).split(',') if p.strip()]
+        return any(p in filter_list for p in parts)
+
     filtered_results = state.results
-    if f_src_db: filtered_results = [r for r in filtered_results if r['source_info']['db_name'] in f_src_db]
-    if f_src_tbl: filtered_results = [r for r in filtered_results if r['source_info']['table_name'] in f_src_tbl]
-    if f_src_col: filtered_results = [r for r in filtered_results if r['source_info']['column_name'] in f_src_col]
-    if f_tgt_db: filtered_results = [r for r in filtered_results if r['target_info']['db_name'] in f_tgt_db]
-    if f_tgt_tbl: filtered_results = [r for r in filtered_results if r['target_info']['table_name'] in f_tgt_tbl]
-    if f_tgt_col: filtered_results = [r for r in filtered_results if r['target_info']['column_name'] in f_tgt_col]
+    if f_src_db: filtered_results = [r for r in filtered_results if matches_filter(r['source_info']['db_name'], f_src_db)]
+    if f_src_tbl: filtered_results = [r for r in filtered_results if matches_filter(r['source_info']['table_name'], f_src_tbl)]
+    if f_src_col: filtered_results = [r for r in filtered_results if matches_filter(r['source_info']['column_name'], f_src_col)]
+    if f_tgt_db: filtered_results = [r for r in filtered_results if matches_filter(r['target_info']['db_name'], f_tgt_db)]
+    if f_tgt_tbl: filtered_results = [r for r in filtered_results if matches_filter(r['target_info']['table_name'], f_tgt_tbl)]
+    if f_tgt_col: filtered_results = [r for r in filtered_results if matches_filter(r['target_info']['column_name'], f_tgt_col)]
 
     st.write(f"Showing {len(filtered_results)} of {len(state.results)} results.")
 
@@ -401,12 +419,20 @@ else:
                     state.sync()
                     with st.spinner(f"Regenerating..."):
                         executor = AgentExecutor(state)
-                        new_res = executor.process_row(res['source_info'], idx, feedback=feed)
-                        for i, r in enumerate(state.results):
+                        # Find the original result to get metadata
+                        orig_res = None
+                        for r in state.results:
                             if r["row_idx"] == idx:
-                                state.results[i].update(new_res)
+                                orig_res = r
                                 break
-                        state.save_project()
+                        
+                        if orig_res:
+                            new_res = executor.process_row(orig_res, idx, feedback=feed)
+                            for i, r in enumerate(state.results):
+                                if r["row_idx"] == idx:
+                                    state.results[i].update(new_res)
+                                    break
+                            state.save_project()
                 
                 if st.button("🔄 Regenerate", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback)):
                     st.rerun()

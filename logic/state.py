@@ -236,9 +236,9 @@ class AppState:
     def mapping_active(self, value: bool):
         st.session_state["mapping_active"] = value
 
-    @property
-    def mapping_active(self) -> bool:
-        return st.session_state.get("mapping_active", False)
+    # @property
+    # def mapping_active(self) -> bool:
+    #     return st.session_state.get("mapping_active", False)
 
     @mapping_active.setter
     def mapping_active(self, value: bool):
@@ -298,5 +298,5 @@ class AppState:
         return {
             "base_url": st.session_state.get("base_url", ""),
             "api_key": st.session_state.get("api_key", ""),
-            "model_name": st.session_state.get("selected_model", "gpt-4o")
+            "model_name": st.session_state.get("selected_model", "")
         }

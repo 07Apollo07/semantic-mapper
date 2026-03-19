@@ -85,6 +85,7 @@ class AgentExecutor:
                 "row_idx": row_idx,
                 "source_info": row_data["source_info"],
                 "target_info": row_data["target_info"],
+                "transformation_specs": row_data["transformation_specs"],
                 **res
             }
         except Exception as e:
@@ -93,6 +94,7 @@ class AgentExecutor:
                 "row_idx": row_idx,
                 "source_info": row_data["source_info"],
                 "target_info": row_data["target_info"],
+                "transformation_specs": row_data["transformation_specs"],
                 "transformation_type": "ERROR",
                 "transformation_logic": str(e),
                 "reasoning": "Processing failed."

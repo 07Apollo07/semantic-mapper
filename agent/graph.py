@@ -50,6 +50,8 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         t = state['target_info']
         
         query = f"Source: {s.get('column_name')} in {s.get('table_name')} | Target: {t.get('column_name')} in {t.get('table_name')}"
+        _log("*" * 40)
+
         _log(f"🔍 [Retriever] Query: {query}")
         
         docs = retriever.invoke(query)
@@ -57,7 +59,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         
         if context:
             _log(f"✅ [Retriever] Found {len(docs)} relevant context snippets.")
-            _log(f"📄 [Retriever] Context preview: {context[:200]}...")
+            _log(f"📄 [Retriever] Context preview: {context}...")
         else:
             _log("⚠️ [Retriever] No relevant context found.")
             
@@ -118,6 +120,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         
         _log(f"✨ [LLM] Result: {response.transformation_type}")
         _log(f"📝 [LLM] Logic: {response.transformation_logic}")
+        _log("*" * 40)
         
         return {
             "transformation_type": response.transformation_type,

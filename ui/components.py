@@ -3,9 +3,8 @@ import pandas as pd
 from logic.model_fetcher import fetch_models
 from logic import AppState
 
-def sidebar_config():
+def sidebar_config(state: AppState):
     """Sidebar for configuration."""
-    state = AppState()
     with st.sidebar:
         st.title("LLM Configuration")
 
@@ -57,30 +56,11 @@ def sidebar_config():
 
         st.divider()
         st.info("Ensure you have uploaded the Knowledge Base before submitting the mapping.")
-
-def step_indicator(current_step):
-    # Initialize state to access sync method
-    state = AppState()
-    
-    def on_step_change(target_step):
-        state.sync()
-        state.step = target_step
-
-    steps = ["1. Knowledge Base", "2. Mapping & Preview", "3. Results", "4. Logs"]
-    cols = st.columns(len(steps))
-    for i, step_name in enumerate(steps):
-        target = i + 1
-        is_current = (target == current_step)
         
-        cols[i].button(
-            step_name, 
-            key=f"step_btn_{target}", 
-            use_container_width=True, 
-            type="primary" if is_current else "secondary",
-            on_click=on_step_change,
-            args=(target,)
-        )
-    st.divider()
+        st.divider()
+        if st.checkbox("🐞 Debug Mode", value=False):
+            st.write("### Session State")
+            st.json(st.session_state)
 
 def display_logs(state, height=300, key_prefix="main"):
     """Reusable log display component."""

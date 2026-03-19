@@ -2,4 +2,4 @@ from .document_processor import process_pdf, get_excel_sheets, process_excel_she
 from .vector_store import VectorStoreManager
 from .utils import excel_col_to_idx
 from .state import AppState
-from .mapper import MappingEngine
+from .project_manager import ProjectManager

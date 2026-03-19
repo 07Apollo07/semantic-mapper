@@ -53,7 +53,8 @@ class AgentExecutor:
         }
         transformation_specs = {
             "type": get_cell_value(row, tr.get("type")),
-            "condition": get_cell_value(row, tr.get("cond"))
+            "condition": get_cell_value(row, tr.get("cond")),
+            "remarks": get_cell_value(row, tr.get("remarks"))
         }
 
         return {

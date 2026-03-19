@@ -100,6 +100,7 @@ def create_agent(retriever, model_name="gpt-4o", api_key=None, base_url=None, lo
         Transformation Specs (from mapping document):
         - Provided Type: {state['transformation_specs'].get('type', 'N/A')}
         - Provided Condition: {state['transformation_specs'].get('condition', 'N/A')}
+        - Remarks: {state['transformation_specs'].get('remarks', 'N/A')}
         
         Knowledge Base Context:
         {state['context'] if state['context'] else "No context available."}

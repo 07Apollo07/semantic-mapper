@@ -19,7 +19,7 @@ class AppState:
         "base_url", "api_key", "selected_model", "available_models",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
-        "map_trans_type", "map_trans_cond",
+        "map_trans_type", "map_trans_cond", "map_remarks",
         "map_r_start", "map_r_end", "map_sheet_selector",
         "auto_scroll", "mapping_active", "mapping_idx"
     ]
@@ -41,7 +41,7 @@ class AppState:
             "available_models": [],
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
-            "map_trans_type": "", "map_trans_cond": "",
+            "map_trans_type": "", "map_trans_cond": "", "map_remarks": "",
             "map_r_start": 1,
             "map_r_end": 10,
             "auto_scroll": True,
@@ -186,6 +186,8 @@ class AppState:
     def map_trans_type(self): return st.session_state.get("map_trans_type", "")
     @property
     def map_trans_cond(self): return st.session_state.get("map_trans_cond", "")
+    @property
+    def map_remarks(self): return st.session_state.get("map_remarks", "")
 
     @property
     def map_r_start(self): return st.session_state.get("map_r_start", 1)

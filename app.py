@@ -257,9 +257,10 @@ if state.mapping_df is not None:
         s_type = st.text_input("Datatype Column", placeholder="e.g. E", key="map_s_type")
     
     st.subheader("Transformation Specs")
-    c_tr1, c_tr2 = st.columns(2)
+    c_tr1, c_tr2, c_tr3 = st.columns(3)
     tr_type = c_tr1.text_input("Transf. Type Column", placeholder="e.g. K", key="map_trans_type")
     tr_cond = c_tr2.text_input("Transf. Condition Column", placeholder="e.g. L", key="map_trans_cond")
+    tr_remarks = c_tr3.text_input("Remarks Column", placeholder="e.g. M", key="map_remarks")
 
     st.subheader("Row Range")
     c_r1, c_r2 = st.columns(2)
@@ -274,7 +275,7 @@ else:
     # Default variables to avoid NameErrors
     s_subj = s_db = s_tbl = s_col = s_type = ""
     t_subj = t_db = t_tbl = t_col = t_type = ""
-    tr_type = tr_cond = ""
+    tr_type = tr_cond = tr_remarks = ""
     r_start = 1
     r_end = 1
 
@@ -288,13 +289,13 @@ if st.session_state.get("show_mapping_preview") and state.mapping_df is not None
     state.mapping_config = {
         "source": {"subj": s_subj, "db": s_db, "tbl": s_tbl, "col": s_col, "type": s_type},
         "target": {"subj": t_subj, "db": t_db, "tbl": t_tbl, "col": t_col, "type": t_type},
-        "transformation": {"type": tr_type, "cond": tr_cond},
+        "transformation": {"type": tr_type, "cond": tr_cond, "remarks": tr_remarks},
         "range": (r_start, r_end)
     }
     
     # Resolve column indices from identifiers
     selected_indices = []
-    for ident in [s_subj, s_db, s_tbl, s_col, s_type, t_subj, t_db, t_tbl, t_col, t_type, tr_type, tr_cond]:
+    for ident in [s_subj, s_db, s_tbl, s_col, s_type, t_subj, t_db, t_tbl, t_col, t_type, tr_type, tr_cond, tr_remarks]:
         if not ident: continue
         if ident in state.mapping_df.columns:
             selected_indices.append(state.mapping_df.columns.get_loc(ident))
@@ -337,82 +338,78 @@ st.header("3. Transformation Results")
 if not state.results:
     st.info("No results generated yet. Complete Step 2 above.")
 else:
-    # Action Bar
-    col_act1, col_act2 = st.columns([4, 1])
-    with col_act2:
-        if st.button("🔄 Clear Results", width='stretch'):
-            state.results = []
-            state.save_project()
-            st.rerun()
-    
-    # Header for the results "table"
-    h_cols = st.columns([0.5, 2, 2, 1.5, 2, 2, 2])
-    h_cols[0].markdown("**Row**")
-    h_cols[1].markdown("**Source Info**")
-    h_cols[2].markdown("**Target Info**")
-    h_cols[3].markdown("**Transf. Type**")
-    h_cols[4].markdown("**Transf. Logic**")
-    h_cols[5].markdown("**Reasoning**")
-    h_cols[6].markdown("**Action & Feedback**")
-    st.divider()
+    # 1. Filter Section
+    with st.expander("🔍 Filter Results", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        
+        # Extract unique values from results
+        all_src_db = sorted(list(set(r['source_info']['db_name'] for r in state.results)))
+        all_src_tbl = sorted(list(set(r['source_info']['table_name'] for r in state.results)))
+        all_src_col = sorted(list(set(r['source_info']['column_name'] for r in state.results)))
+        
+        all_tgt_db = sorted(list(set(r['target_info']['db_name'] for r in state.results)))
+        all_tgt_tbl = sorted(list(set(r['target_info']['table_name'] for r in state.results)))
+        all_tgt_col = sorted(list(set(r['target_info']['column_name'] for r in state.results)))
 
-    for res in state.results:
+        f_src_db = c1.multiselect("Source DB", all_src_db)
+        f_src_tbl = c2.multiselect("Source Table", all_src_tbl)
+        f_src_col = c3.multiselect("Source Column", all_src_col)
+        
+        c4, c5, c6 = st.columns(3)
+        f_tgt_db = c4.multiselect("Target DB", all_tgt_db)
+        f_tgt_tbl = c5.multiselect("Target Table", all_tgt_tbl)
+        f_tgt_col = c6.multiselect("Target Column", all_tgt_col)
+
+    # 2. Filter logic
+    filtered_results = state.results
+    if f_src_db: filtered_results = [r for r in filtered_results if r['source_info']['db_name'] in f_src_db]
+    if f_src_tbl: filtered_results = [r for r in filtered_results if r['source_info']['table_name'] in f_src_tbl]
+    if f_src_col: filtered_results = [r for r in filtered_results if r['source_info']['column_name'] in f_src_col]
+    if f_tgt_db: filtered_results = [r for r in filtered_results if r['target_info']['db_name'] in f_tgt_db]
+    if f_tgt_tbl: filtered_results = [r for r in filtered_results if r['target_info']['table_name'] in f_tgt_tbl]
+    if f_tgt_col: filtered_results = [r for r in filtered_results if r['target_info']['column_name'] in f_tgt_col]
+
+    st.write(f"Showing {len(filtered_results)} of {len(state.results)} results.")
+
+    if st.button("🔄 Clear All Results", width='stretch'):
+        state.results = []
+        state.save_project()
+        st.rerun()
+
+    for res in filtered_results:
         row_idx = res['row_idx']
         with st.container(border=True):
-            c = st.columns([0.5, 2, 2, 1.5, 2, 2, 2])
+            # Header: Row + Type + SQL
+            col_l, col_r = st.columns([1, 4])
+            with col_l:
+                st.markdown(f"**Row #{row_idx}**")
+                st.caption(f"`{res['transformation_type']}`")
+            with col_r:
+                st.code(res['transformation_logic'], language="sql")
             
-            # Row Index
-            c[0].write(f"#{row_idx}")
-            
-            # Source Info
+            # Compact Metadata
             s = res['source_info']
-            c[1].markdown(f"**Subj:** {s['subject_area']}\n\n**DB:** {s['db_name']}\n\n**Tbl:** {s['table_name']}\n\n**Col:** {s['column_name']}\n\n**Type:** {s['datatype']}")
-            
-            # Target Info
             t = res['target_info']
-            c[2].markdown(f"**Subj:** {t['subject_area']}\n\n**DB:** {t['db_name']}\n\n**Tbl:** {t['table_name']}\n\n**Col:** {t['column_name']}\n\n**Type:** {t['datatype']}")
-            
-            # Transformation Type
-            c[3].info(res['transformation_type'])
-            
-            # Transformation Logic
-            c[4].code(res['transformation_logic'], language="sql")
-            
-            # Reasoning
-            c[5].write(res['reasoning'])
-            
-            # Action & Feedback
-            with c[6]:
-                feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}", height=150)
+            st.caption(f"**Src:** `{s.get('db_name')}.{s.get('table_name')}.{s.get('column_name')}` | **Tgt:** `{t.get('db_name')}.{t.get('table_name')}.{t.get('column_name')}`")
+
+            # Details Expander
+            with st.expander("Details, Reasoning & Feedback"):
+                st.markdown(f"**Reasoning:** {res['reasoning']}")
+                feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}")
                 
                 def on_regen_row(idx, feed):
                     state.sync()
-                    with st.spinner(f"Regenerating row {idx}..."):
+                    with st.spinner(f"Regenerating..."):
                         executor = AgentExecutor(state)
-                        
-                        # 1. Find the current row's data structure
-                        current_results = state.results
-                        found_idx = -1
-                        for i, r in enumerate(current_results):
+                        new_res = executor.process_row(res['source_info'], idx, feedback=feed)
+                        for i, r in enumerate(state.results):
                             if r["row_idx"] == idx:
-                                found_idx = i
+                                state.results[i].update(new_res)
                                 break
-                        
-                        if found_idx == -1:
-                            state.add_log(f"⚠️ Cannot find Row {idx} in results for regeneration.")
-                            return
-
-                        row_data = current_results[found_idx]
-                        # feedback is passed to process_row
-                        new_res = executor.process_row(row_data, idx, feedback=feed)
-                        
-                        # 2. Update the entry in state
-                        current_results[found_idx].update(new_res)
-                        state.results = current_results # Trigger state update
-                        state.save_project() # Save results
-
-                st.button("🔄 Regenerate", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback), width='stretch', type="primary")
-
+                        state.save_project()
+                
+                if st.button("🔄 Regenerate", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback)):
+                    st.rerun()
     # Export
     export_data = []
     for res in state.results:

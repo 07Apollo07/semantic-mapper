@@ -20,7 +20,8 @@ class AppState:
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
         "map_trans_type", "map_trans_cond",
-        "map_r_start", "map_r_end", "map_sheet_selector"
+        "map_r_start", "map_r_end", "map_sheet_selector",
+        "auto_scroll", "mapping_active", "mapping_idx"
     ]
 
     def __init__(self):
@@ -42,7 +43,10 @@ class AppState:
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
             "map_trans_type": "", "map_trans_cond": "",
             "map_r_start": 1,
-            "map_r_end": 10
+            "map_r_end": 10,
+            "auto_scroll": True,
+            "mapping_active": False,
+            "mapping_idx": 0
         }
         for k, v in defaults.items():
             if k not in st.session_state:
@@ -220,6 +224,41 @@ class AppState:
     @results.setter
     def results(self, value: List[Dict[str, Any]]):
         st.session_state["results"] = value
+        self.save_project()
+
+    @property
+    def mapping_active(self) -> bool:
+        return st.session_state.get("mapping_active", False)
+
+    @mapping_active.setter
+    def mapping_active(self, value: bool):
+        st.session_state["mapping_active"] = value
+
+    @property
+    def mapping_active(self) -> bool:
+        return st.session_state.get("mapping_active", False)
+
+    @mapping_active.setter
+    def mapping_active(self, value: bool):
+        st.session_state["mapping_active"] = value
+        self.save_project()
+
+    @property
+    def mapping_idx(self) -> int:
+        return st.session_state.get("mapping_idx", 0)
+
+    @mapping_idx.setter
+    def mapping_idx(self, value: int):
+        st.session_state["mapping_idx"] = value
+        self.save_project()
+
+    @property
+    def auto_scroll(self) -> bool:
+        return st.session_state.get("auto_scroll", True)
+
+    @auto_scroll.setter
+    def auto_scroll(self, value: bool):
+        st.session_state["auto_scroll"] = value
         self.save_project()
 
     @property

@@ -11,15 +11,15 @@ from logic import (
     ProjectManager
 )
 from logic.utils import get_cell_value
-from agent import create_agent
+from agent import create_agent, AgentExecutor
 from ui import sidebar_config, display_logs
 
 st.set_page_config(page_title="Semantic Mapper AI", layout="wide")
 
-# Initialize State
+#  Initialize State
 state = AppState()
 
-# --- Project Selection ---
+#  --- Project Selection ---
 if not state.current_project:
     st.title("Semantic Mapper AI 🧠")
     st.markdown("### Select or Create a Project")
@@ -45,11 +45,11 @@ if not state.current_project:
         if projects:
             selected_proj = st.selectbox("Select Project", projects)
             col_open, col_del = st.columns([1, 1])
-            if col_open.button("Open Project", type="primary", use_container_width=True):
+            if col_open.button("Open Project", type="primary", width='stretch'):
                 state.load_project(selected_proj)
                 st.rerun()
                 
-            if col_del.button("Delete Project", type="secondary", use_container_width=True):
+            if col_del.button("Delete Project", type="secondary", width='stretch'):
                  ProjectManager.delete_project(selected_proj)
                  st.success(f"Deleted project: {selected_proj}")
                  st.rerun()
@@ -58,12 +58,12 @@ if not state.current_project:
             
     st.stop() 
 
-# --- Main App ---
+#  --- Main App ---
 
-# Project Sidebar
+#  Project Sidebar
 with st.sidebar:
     st.markdown(f"### 📂 Project: {state.current_project}")
-    if st.button("↩️ Switch Project", use_container_width=True):
+    if st.button("↩️ Switch Project", width='stretch'):
         state.current_project = None
         state.reset_kb()
         st.rerun()
@@ -72,10 +72,10 @@ with st.sidebar:
 sidebar_config(state)
 st.title("Semantic Mapper AI 🧠")
 
-# Section 1: Knowledge Base Manager
+#  Section 1: Knowledge Base Manager
 st.header("1. Knowledge Base Manager")
 
-# --- 1. Upload Section ---
+#  --- 1. Upload Section ---
 uploaded_files = st.file_uploader("Upload PDFs or Excel Sheets", accept_multiple_files=True, type=["pdf", "xlsx"], key="uploader")
 
 if uploaded_files:
@@ -107,7 +107,7 @@ if uploaded_files:
     state.kb_inventory = inventory # Trigger update
     state.save_project()
 
-# --- 2. Dashboard Section ---
+#  --- 2. Dashboard Section ---
 if state.kb_inventory:
     st.subheader("Manage Documents")
     needs_sync = False
@@ -185,7 +185,7 @@ if state.kb_inventory:
     # --- 3. Action Buttons ---
     col_btn1, col_btn2 = st.columns([1, 1])
     if needs_sync:
-        if col_btn1.button("🔄 Sync with Vector Store", type="primary", use_container_width=True):
+        if col_btn1.button("🔄 Sync with Vector Store", type="primary", width='stretch'):
             with st.spinner("Syncing changes..."):
                 for idx, item in enumerate(inventory):
                     if item["type"] == "pdf":
@@ -210,19 +210,19 @@ if state.kb_inventory:
                 st.success("Vector Store synced!")
                 st.rerun()
     
-    if col_btn2.button("🧹 Clear All", use_container_width=True):
+    if col_btn2.button("🧹 Clear All", width='stretch'):
         state.reset_kb()
         state.save_project()
         st.rerun()
 
 st.divider()
 
-# Section 2: Mapping Configuration
+#  Section 2: Mapping Configuration
 st.header("2. Configure Mapping Document")
 
 mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"], key="map_uploader")
 
-# Process new upload
+#  Process new upload
 if mapping_file:
     file_bytes = mapping_file.read()
     sheets = get_excel_sheets(file_bytes)
@@ -230,11 +230,11 @@ if mapping_file:
     state.mapping_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_map_sheet)
     state.save_project()
 
-# Even if mapping_file is None (on rerun), we might have mapping_df from previous upload
+#  Even if mapping_file is None (on rerun), we might have mapping_df from previous upload
 if state.mapping_df is not None:
     df = state.mapping_df
     st.write("### Raw Data Preview")
-    st.dataframe(df.head(), use_container_width=True)
+    st.dataframe(df.head(), width='stretch')
 
     st.divider()
     st.subheader("Map Columns")
@@ -266,7 +266,7 @@ if state.mapping_df is not None:
     r_start = c_r1.number_input("Start Row", min_value=1, max_value=len(df), key="map_r_start")
     r_end = c_r2.number_input("End Row", min_value=1, max_value=len(df), key="map_r_end")
 
-    if st.button("Preview Mapping", use_container_width=True):
+    if st.button("Preview Mapping", width='stretch'):
         st.session_state.show_mapping_preview = True
         state.save_project()
 else:
@@ -308,106 +308,28 @@ if st.session_state.get("show_mapping_preview") and state.mapping_df is not None
     
     if unique_indices:
         preview_df = state.mapping_df.iloc[r_start-1:r_end, unique_indices]
-        st.dataframe(preview_df, use_container_width=True)
+        st.dataframe(preview_df, width='stretch')
     else:
         st.warning("No valid columns mapped yet.")
     
-    if st.button("🚀 Generate Mappings", type="primary", use_container_width=True, on_click=state.sync):
-        
-        # --- Inline Mapping Logic ---
-        state.clear_logs()
-        
-        # 1. Initialize Agent
-        llm_config = state.get_llm_config()
-        state.add_log(f"Initializing agent with model: {llm_config['model_name']}")
-        
-        retriever = state.v_manager.get_retriever()
-        
-        def _log(message: str):
-            state.add_log(message)
-            
-        agent = create_agent(
-            retriever,
-            model_name=llm_config["model_name"],
-            api_key=llm_config["api_key"],
-            base_url=llm_config["base_url"],
-            log_callback=_log
-        )
-        
-        # 2. Run Loop
-        df = state.mapping_df
-        conf = state.mapping_config
-        results = []
-        
-        progress_bar = st.progress(0)
-        total_rows = r_end - r_start + 1
-        
-        for i, idx in enumerate(range(r_start - 1, r_end)):
-            if idx >= len(df): break
-            
-            row = df.iloc[idx]
-            
-            # Extract Data using helper
-            source_info = {
-                "subject_area": get_cell_value(row, s_subj),
-                "db_name": get_cell_value(row, s_db),
-                "table_name": get_cell_value(row, s_tbl),
-                "column_name": get_cell_value(row, s_col),
-                "datatype": get_cell_value(row, s_type)
-            }
-            target_info = {
-                "subject_area": get_cell_value(row, t_subj),
-                "db_name": get_cell_value(row, t_db),
-                "table_name": get_cell_value(row, t_tbl),
-                "column_name": get_cell_value(row, t_col),
-                "datatype": get_cell_value(row, t_type)
-            }
-            
-            transformation_specs = {
-                "type": get_cell_value(row, tr_type),
-                "condition": get_cell_value(row, tr_cond)
-            }
-            
-            state.add_log(f"Processing Row {idx+1}: {source_info['column_name']} -> {target_info['column_name']}")
-            
-            try:
-                res = agent.invoke({
-                    "source_info": source_info,
-                    "target_info": target_info,
-                    "transformation_specs": transformation_specs,
-                    "context": "",
-                    "transformation_type": "",
-                    "transformation_logic": "",
-                    "reasoning": ""
-                })
-                
-                result_entry = {
-                    "row_idx": idx + 1,
-                    "source_info": source_info,
-                    "target_info": target_info,
-                    **res
-                }
-                results.append(result_entry)
-                state.add_log(f"✅ Success Row {idx+1}: {res['transformation_type']}")
-                
-            except Exception as e:
-                state.add_log(f"❌ Error Row {idx+1}: {str(e)}")
-                results.append({
-                    "row_idx": idx + 1,
-                    "source_info": source_info,
-                    "target_info": target_info,
-                    "transformation_type": "ERROR",
-                    "transformation_logic": str(e),
-                    "reasoning": "Processing failed."
-                })
-            
-            progress_bar.progress((i + 1) / total_rows)
-        
-        state.results = results
-        state.save_project() # Save results
-        st.rerun()
+    # --- Mapping Execution Controls ---
+    col_gen, col_stop = st.columns(2)
+    with col_gen:
+        if st.button("🚀 Generate Mappings", type="primary", use_container_width=True, disabled=state.mapping_active):
+            state.mapping_active = True
+            state.mapping_idx = state.map_r_start - 1
+            state.results = []
+            state.clear_logs()
+            st.rerun()
+    with col_stop:
+        if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, disabled=not state.mapping_active, key="stop_mapping_top"):
+            state.mapping_active = False
+            state.mapping_idx = 0
+            state.save_project()
+            st.rerun()
 
-st.divider()
+    st.divider()
+
 
 # Section 3: Results
 st.header("3. Transformation Results")
@@ -418,7 +340,7 @@ else:
     # Action Bar
     col_act1, col_act2 = st.columns([4, 1])
     with col_act2:
-        if st.button("🔄 Clear Results", use_container_width=True):
+        if st.button("🔄 Clear Results", width='stretch'):
             state.results = []
             state.save_project()
             st.rerun()
@@ -466,15 +388,9 @@ else:
                 def on_regen_row(idx, feed):
                     state.sync()
                     with st.spinner(f"Regenerating row {idx}..."):
-                        # Inline regeneration logic
-                        # 1. Initialize Agent
-                        llm_config = state.get_llm_config()
-                        state.add_log(f"Initializing agent for regeneration with model: {llm_config['model_name']}")
-                        retriever = state.v_manager.get_retriever()
-                        def _log(message: str): state.add_log(message)
-                        agent = create_agent(retriever, model_name=llm_config["model_name"], api_key=llm_config["api_key"], base_url=llm_config["base_url"], log_callback=_log)
+                        executor = AgentExecutor(state)
                         
-                        # 2. Find row
+                        # 1. Find the current row's data structure
                         current_results = state.results
                         found_idx = -1
                         for i, r in enumerate(current_results):
@@ -487,28 +403,15 @@ else:
                             return
 
                         row_data = current_results[found_idx]
-                        state.add_log(f"Regenerating Row {idx} with feedback: {feed}")
+                        # feedback is passed to process_row
+                        new_res = executor.process_row(row_data, idx, feedback=feed)
                         
-                        try:
-                            new_res = agent.invoke({
-                                "source_info": row_data["source_info"],
-                                "target_info": row_data["target_info"],
-                                "context": "",
-                                "transformation_type": "",
-                                "transformation_logic": "",
-                                "reasoning": "",
-                                "feedback": feed
-                            })
-                            
-                            # Update the entry in state
-                            current_results[found_idx].update(new_res)
-                            state.results = current_results # Trigger state update
-                            state.add_log(f"✅ Row {idx} regenerated successfully.")
-                            state.save_project() # Save results
-                        except Exception as e:
-                            state.add_log(f"❌ Error regenerating Row {idx}: {str(e)}")
+                        # 2. Update the entry in state
+                        current_results[found_idx].update(new_res)
+                        state.results = current_results # Trigger state update
+                        state.save_project() # Save results
 
-                st.button("🔄 Regenerate", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback), use_container_width=True, type="primary")
+                st.button("🔄 Regenerate", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback), width='stretch', type="primary")
 
     # Export
     export_data = []
@@ -542,15 +445,60 @@ else:
         data=buffer.getvalue(),
         file_name="semantic_mapping_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width='stretch',
         type="primary"
     )
 
 st.divider()
 
 # Section 4: Logs
-st.header("4. Application Logs 📑")
-display_logs(state, height=400, key_prefix="main_logs")
+st.header("4. Application Logs 📑"  )
+# display_logs(state, height=400, key_prefix="main_logs")
 
-# Final state sync to capture widget changes from this run
-state.sync()
+# --- Mapping Execution Loop (State Machine) ---
+if state.mapping_active:
+    # Stop Button
+    if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, key="stop_mapping_bottom"):
+        state.mapping_active = False
+        state.mapping_idx = 0
+        state.save_project()
+        st.session_state["processing_row"] = False
+        st.rerun()
+
+    # If already processing, show status and stop to avoid re-triggering
+    if st.session_state.get("processing_row", False):
+        st.info("Mapping in progress...")
+        st.stop()
+
+    # Process next row
+    idx = state.mapping_idx
+    if idx < len(state.mapping_df):
+        st.session_state["processing_row"] = True
+        
+        executor = AgentExecutor(state)
+        row = state.mapping_df.iloc[idx]
+        row_info = executor.extract_row_info(row, state.mapping_config)
+        
+        # Progress bar
+        r_start, r_end = state.mapping_config.get("range", (1, 10))
+        st.progress((idx - r_start + 2) / (r_end - r_start + 1))
+        
+        # Process row
+        result = executor.process_row(row_info, idx + 1)
+        
+        # Update state
+        state.results.append(result)
+        state.mapping_idx += 1
+        state.save_project()
+        
+        # Reset flag
+        st.session_state["processing_row"] = False
+        
+        # Completion Check
+        if state.mapping_idx >= r_end:
+            state.mapping_active = False
+            state.mapping_idx = 0
+            state.save_project()
+            
+        st.rerun()
+

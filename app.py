@@ -476,7 +476,7 @@ st.divider()
 
 # Section 4: Logs
 st.header("4. Application Logs 📑"  )
-# display_logs(state, height=400, key_prefix="main_logs")
+display_logs(state, height=400, key_prefix="main_logs")
 
 # --- Mapping Execution Loop (State Machine) ---
 if state.mapping_active:

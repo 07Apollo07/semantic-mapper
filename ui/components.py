@@ -38,6 +38,13 @@ def sidebar_config(state: AppState):
             key="selected_model"
         )
 
+        st.radio(
+            "Agent Mode",
+            options=["One-shot", "ReAct Agent"],
+            key="agent_mode",
+            help="One-shot: Simple retrieval + generation. ReAct Agent: Can iteratively search KB if needed."
+        )
+
         st.divider()
         st.subheader("Embedding Configuration")
 
@@ -86,17 +93,17 @@ def display_logs(state: AppState, height=300, key_prefix="main"):
                 height=height, 
                 disabled=True
             )
-            if state.auto_scroll:
-                # Force the textarea to scroll to the maximum possible scrollHeight
-                st_js("""
-                    const textareas = parent.document.querySelectorAll('textarea');
-                    if (textareas.length > 0) {
-                        const last = textareas[textareas.length - 1];
-                        last.scrollTop = last.scrollHeight;
-                        // Forcing an extremely high value is a common trick to hit the absolute bottom
-                        last.scrollTop = 9999999;
-                    }
-                """)
+            # if state.auto_scroll:
+            #     # Force the textarea to scroll to the maximum possible scrollHeight
+            #     st_js("""
+            #         const textareas = parent.document.querySelectorAll('textarea');
+            #         if (textareas.length > 0) {
+            #             const last = textareas[textareas.length - 1];
+            #             last.scrollTop = last.scrollHeight;
+            #             // Forcing an extremely high value is a common trick to hit the absolute bottom
+            #             last.scrollTop = 9999999;
+            #         }
+            #     """)
 
     # Initial render
     render_log_content()

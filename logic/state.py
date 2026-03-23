@@ -16,7 +16,7 @@ class AppState:
         "current_project",
         "step", "kb_inventory", "mapping_df", "mapping_config", 
         "results", "logs", "show_mapping_preview",
-        "base_url", "api_key", "selected_model", "available_models",
+        "base_url", "api_key", "selected_model", "available_models", "agent_mode",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
         "map_trans_type", "map_trans_cond", "map_remarks",
@@ -39,6 +39,7 @@ class AppState:
             "api_key": "",
             "selected_model": "gpt-4o",
             "available_models": [],
+            "agent_mode": "One-shot",
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
             "map_trans_type": "", "map_trans_cond": "", "map_remarks": "",
@@ -140,6 +141,15 @@ class AppState:
         """
         Alias for save_project to maintain compatibility.
         """
+        self.save_project()
+
+    @property
+    def agent_mode(self) -> str:
+        return st.session_state.get("agent_mode", "One-shot")
+
+    @agent_mode.setter
+    def agent_mode(self, value: str):
+        st.session_state["agent_mode"] = value
         self.save_project()
 
     @property

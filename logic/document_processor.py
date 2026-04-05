@@ -50,7 +50,7 @@ def excel_to_sqlite(file_bytes, project_name, selected_sheets):
         
     sanitized_tables = {}
     for sheet_name, df in xl.items():
-        actual_table_name = ProjectManager.save_df_to_sql(project_name, sheet_name, df)
+        actual_table_name = ProjectManager.save_df_to_sql(project_name, "FSDM/ETL_" + sheet_name, df)
         sanitized_tables[sheet_name] = actual_table_name
     return sanitized_tables
 

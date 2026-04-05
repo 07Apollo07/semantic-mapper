@@ -15,13 +15,14 @@ class AppState:
     PERSISTENT_KEYS = [
         "current_project",
         "step", "kb_inventory", "fsdm_inventory", "mapping_df", "mapping_config", 
-        "results", "logs", "show_mapping_preview",
+        "logs", "show_mapping_preview",
         "base_url", "api_key", "selected_model", "available_models", "agent_mode",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
         "map_trans_type", "map_trans_cond", "map_remarks",
-        "map_r_start", "map_r_end", "map_sheet_selector",
-        "auto_scroll", "mapping_active", "mapping_idx"
+        "map_sheet_selector",
+        "auto_scroll", "mapping_active",
+        "selected_target_table", "global_instructions", "preprocessing_active", "current_mapping_step"
     ]
 
     def __init__(self):
@@ -33,7 +34,6 @@ class AppState:
             "step": 1,
             "kb_inventory": [],
             "fsdm_inventory": [],
-            "results": [],
             "logs": [],
             "show_mapping_preview": False,
             "base_url": "",
@@ -44,11 +44,12 @@ class AppState:
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
             "map_trans_type": "", "map_trans_cond": "", "map_remarks": "",
-            "map_r_start": 1,
-            "map_r_end": 10,
             "auto_scroll": True,
             "mapping_active": False,
-            "mapping_idx": 0
+            "selected_target_table": None,
+            "global_instructions": "",
+            "preprocessing_active": False,
+            "current_mapping_step": "CONFIG"
         }
         for k, v in defaults.items():
             if k not in st.session_state:
@@ -58,6 +59,7 @@ class AppState:
         # This handles cases where Streamlit purges keys for non-rendered widgets
         curr_proj = st.session_state.get("current_project")
         if curr_proj:
+            ProjectManager.initialize_project_db(curr_proj) # Ensure DB is ready
             meta = ProjectManager.load_metadata(curr_proj)
             for k in self.PERSISTENT_KEYS:
                 # If key is in meta but missing from session_state, restore it.
@@ -77,6 +79,9 @@ class AppState:
 
     def load_project(self, project_name: str):
         self.current_project = project_name
+        
+        # Initialize DB
+        ProjectManager.initialize_project_db(project_name)
         
         # Load metadata
         meta = ProjectManager.load_metadata(project_name)
@@ -201,11 +206,6 @@ class AppState:
     def map_remarks(self): return st.session_state.get("map_remarks", "")
 
     @property
-    def map_r_start(self): return st.session_state.get("map_r_start", 1)
-    @property
-    def map_r_end(self): return st.session_state.get("map_r_end", 10)
-
-    @property
     def kb_inventory(self) -> List[Dict[str, Any]]:
 
         return st.session_state.get("kb_inventory", [])
@@ -275,6 +275,42 @@ class AppState:
         self.save_project()
 
     @property
+    def selected_target_table(self) -> Optional[str]:
+        return st.session_state.get("selected_target_table")
+
+    @selected_target_table.setter
+    def selected_target_table(self, value: Optional[str]):
+        st.session_state["selected_target_table"] = value
+        self.save_project()
+
+    @property
+    def global_instructions(self) -> str:
+        return st.session_state.get("global_instructions", "")
+
+    @global_instructions.setter
+    def global_instructions(self, value: str):
+        st.session_state["global_instructions"] = value
+        self.save_project()
+
+    @property
+    def preprocessing_active(self) -> bool:
+        return st.session_state.get("preprocessing_active", False)
+
+    @preprocessing_active.setter
+    def preprocessing_active(self, value: bool):
+        st.session_state["preprocessing_active"] = value
+        self.save_project()
+
+    @property
+    def current_mapping_step(self) -> str:
+        return st.session_state.get("current_mapping_step", "CONFIG")
+
+    @current_mapping_step.setter
+    def current_mapping_step(self, value: str):
+        st.session_state["current_mapping_step"] = value
+        self.save_project()
+
+    @property
     def auto_scroll(self) -> bool:
         return st.session_state.get("auto_scroll", True)
 
@@ -309,10 +345,14 @@ class AppState:
         self.clear_logs()
         self.mapping_df = None
         st.session_state.show_mapping_preview = False
+        self.selected_target_table = None
+        self.global_instructions = ""
+        self.preprocessing_active = False
+        self.current_mapping_step = "CONFIG"
         # Clear storage keys for mapping
         for k in self.PERSISTENT_KEYS:
             if k.startswith("map_"):
-                st.session_state[k] = 1 if "start" in k or "end" in k else ""
+                st.session_state[k] = ""
         self.save_project()
 
     def get_llm_config(self) -> Dict[str, Any]:

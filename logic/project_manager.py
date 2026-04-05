@@ -114,6 +114,121 @@ class ProjectManager:
         return f"sqlite:///{path}"
 
     @staticmethod
+    def initialize_project_db(project_name: str):
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create final_mappings table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS final_mappings (
+                row_idx INTEGER PRIMARY KEY,
+                target_table TEXT,
+                source_info TEXT,
+                target_info TEXT,
+                transformation_specs TEXT,
+                pre_mapping_insight TEXT,
+                human_correction TEXT,
+                validation_status TEXT,
+                transformation_type TEXT,
+                transformation_logic TEXT,
+                reasoning TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def save_mapping_row(project_name: str, row_data: Dict[str, Any]):
+        import sqlite3
+        import json
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        target_table = str(row_data.get('target_table', '')).strip()
+        
+        # We use INSERT OR REPLACE to handle updates
+        cursor.execute("""
+            INSERT OR REPLACE INTO final_mappings (
+                row_idx, target_table, source_info, target_info, transformation_specs,
+                pre_mapping_insight, human_correction, validation_status,
+                transformation_type, transformation_logic, reasoning
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            row_data.get('row_idx'),
+            target_table,
+            json.dumps(row_data.get('source_info')),
+            json.dumps(row_data.get('target_info')),
+            json.dumps(row_data.get('transformation_specs')),
+            row_data.get('pre_mapping_insight'),
+            row_data.get('human_correction'),
+            row_data.get('validation_status', 'Pending'),
+            row_data.get('transformation_type'),
+            row_data.get('transformation_logic'),
+            row_data.get('reasoning')
+        ))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_mappings_by_table(project_name: str, target_table: str) -> List[Dict[str, Any]]:
+        import sqlite3
+        import json
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        target_table = str(target_table).strip()
+        cursor.execute("SELECT * FROM final_mappings WHERE target_table = ?", (target_table,))
+        rows = cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            res = dict(row)
+            res['source_info'] = json.loads(res['source_info'])
+            res['target_info'] = json.loads(res['target_info'])
+            res['transformation_specs'] = json.loads(res['transformation_specs'])
+            results.append(res)
+            
+        conn.close()
+        return results
+
+    @staticmethod
+    def update_mapping_validation(project_name: str, row_idx: int, updates: Dict[str, Any]):
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+        params = list(updates.values()) + [row_idx]
+        
+        cursor.execute(f"UPDATE final_mappings SET {set_clause} WHERE row_idx = ?", params)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_unique_target_tables(project_name: str) -> List[str]:
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return []
+            
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT DISTINCT target_table FROM final_mappings")
+            tables = [r[0] for r in cursor.fetchall() if r[0]]
+            return sorted(tables)
+        except sqlite3.OperationalError:
+            return []
+        finally:
+            conn.close()
+
+    @staticmethod
     def save_df_to_sql(project_name: str, table_name: str, df: pd.DataFrame):
         import sqlite3
         import re

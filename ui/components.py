@@ -39,14 +39,14 @@ def sidebar_config(state: AppState):
             key="selected_model"
         )
 
-        st.radio(   
-            "Agent Mode",
-            options=["One-shot", "ReAct Agent"],
-            key="agent_mode",
-            help="One-shot: Simple retrieval + generation. ReAct Agent: Can iteratively search KB if needed."
-        )
-
-        st.divider()
+                # st.radio(   
+        #     "Agent Mode",
+        #     options=["One-shot", "ReAct Agent"],
+        #     key="agent_mode",
+        #     help="One-shot: Simple retrieval + generation. ReAct Agent: Can iteratively search KB if needed."
+        # )
+        st.session_state["agent_mode"] = "ReAct Agent"
+        st.info("🤖 Agent Mode: ReAct (Always On)")
         st.subheader("Embedding Configuration")
 
         v_manager = state.v_manager

@@ -103,3 +103,30 @@ class ProjectManager:
             elif filename.endswith(".csv"):
                 return pd.read_csv(path)
         return None
+
+    @staticmethod
+    def get_db_path(project_name: str) -> str:
+        return os.path.join(PROJECTS_DIR, project_name, "mapping.db")
+
+    @staticmethod
+    def get_db_uri(project_name: str) -> str:
+        path = os.path.abspath(ProjectManager.get_db_path(project_name))
+        return f"sqlite:///{path}"
+
+    @staticmethod
+    def save_df_to_sql(project_name: str, table_name: str, df: pd.DataFrame):
+        import sqlite3
+        import re
+        
+        # Sanitize table name
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name).lower()
+        if sanitized_name[0].isdigit():
+            sanitized_name = "t_" + sanitized_name
+            
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        try:
+            df.to_sql(sanitized_name, conn, if_exists='replace', index=False)
+        finally:
+            conn.close()
+        return sanitized_name

@@ -40,6 +40,20 @@ def process_excel_sheets(file_bytes, filename, selected_sheets):
             docs.append(Document(page_content=content, metadata={"source": filename, "sheet": sheet_name, "row": i}))
     return docs
 
+def excel_to_sqlite(file_bytes, project_name, selected_sheets):
+    """Saves specific sheets from an Excel file to SQLite."""
+    from .project_manager import ProjectManager
+    xl = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheets)
+    
+    if isinstance(xl, pd.DataFrame):
+        xl = {selected_sheets[0]: xl}
+        
+    sanitized_tables = {}
+    for sheet_name, df in xl.items():
+        actual_table_name = ProjectManager.save_df_to_sql(project_name, sheet_name, df)
+        sanitized_tables[sheet_name] = actual_table_name
+    return sanitized_tables
+
 def split_documents(documents, chunk_size=1000, chunk_overlap=200):
     """Splits documents into smaller chunks for vector store."""
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)

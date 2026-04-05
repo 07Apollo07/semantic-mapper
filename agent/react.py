@@ -32,7 +32,7 @@ def create_react_agent_runnable(retriever, model_name="gpt-4o", api_key=None, ba
         docs = retriever.invoke(query)
         context = "\n\n".join([doc.page_content for doc in docs])
         _log(f"✅ [ReAct Tool] Found {len(docs)} snippets.")
-        return context
+        return contexts
 
     tools = [search_kb]
 

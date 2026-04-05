@@ -11,7 +11,8 @@ def sidebar_config(state: AppState):
 
         # Base URL and API Key
         base_url = st.text_input("Base URL", value=st.session_state.get("base_url", ""), placeholder="e.g. http://localhost:11434")
-        api_key = st.text_input("API Key", value=st.session_state.get("api_key", ""), type="password")
+        # api_key = st.text_input("API Key", value=st.session_state.get("api_key", ""), type="password", disabled=True)
+        api_key = "Not Required"
 
         # Update session state
         st.session_state["base_url"] = base_url
@@ -38,7 +39,7 @@ def sidebar_config(state: AppState):
             key="selected_model"
         )
 
-        st.radio(
+        st.radio(   
             "Agent Mode",
             options=["One-shot", "ReAct Agent"],
             key="agent_mode",

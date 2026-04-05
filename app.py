@@ -5,6 +5,7 @@ from logic import (
     process_pdf, 
     get_excel_sheets, 
     process_excel_sheets, 
+    excel_to_sqlite,
     split_documents, 
     excel_col_to_idx,
     AppState,
@@ -217,6 +218,99 @@ if state.kb_inventory:
 
 st.divider()
 
+#  Section 1.2: Knowledge Base DB Manager
+st.header("1.2 Knowledge Base DB Manager")
+
+#  --- 1. Upload Section ---
+fsdm_uploaded_files = st.file_uploader("Upload FSDM/ETL Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="fsdm_uploader")
+
+if fsdm_uploaded_files:
+    fsdm_inventory = state.fsdm_inventory
+    for f in fsdm_uploaded_files:
+        if not any(item["name"] == f.name for item in fsdm_inventory):
+            f.seek(0)
+            file_bytes = f.read()
+            
+            # Save to disk
+            ProjectManager.save_file(state.current_project, f.name, file_bytes)
+            
+            sheets = get_excel_sheets(file_bytes)
+            fsdm_inventory.append({
+                "name": f.name,
+                "type": "excel",
+                "bytes": file_bytes,
+                "sheets": {s: {"selected": True, "indexed": False} for s in sheets}
+            })
+    state.fsdm_inventory = fsdm_inventory # Trigger update
+    state.save_project()
+
+#  --- 2. Dashboard Section ---
+if state.fsdm_inventory:
+    st.subheader("Manage DB Documents")
+    needs_db_sync = False
+    fsdm_inventory = state.fsdm_inventory
+    
+    for idx, item in enumerate(fsdm_inventory):
+        with st.container():
+            col_name, col_status, col_rm = st.columns([5, 2, 1])
+            
+            sheets_data = item["sheets"]
+            indexed_count = sum(1 for s in sheets_data.values() if s["indexed"])
+            selected_count = sum(1 for s in sheets_data.values() if s["selected"])
+            
+            if indexed_count == selected_count and indexed_count > 0:
+                col_status.success(f"✅ {indexed_count} Tables")
+            elif indexed_count > 0:
+                col_status.warning(f"🟠 {indexed_count}/{selected_count} Sync")
+                needs_db_sync = True
+            elif selected_count > 0:
+                col_status.info(f"⏳ {selected_count} Pending")
+                needs_db_sync = True
+            
+            if any(s["selected"] != s["indexed"] for s in sheets_data.values()):
+                needs_db_sync = True
+
+            col_name.markdown(f"📊 **{item['name']}**")
+            with col_name.expander("Show Sheets"):
+                for s_name, s_info in sheets_data.items():
+                    s_col1, s_col2 = st.columns([3, 1])
+                    checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_fsdm_{item['name']}_{s_name}")
+                    if checked != s_info["selected"]:
+                        fsdm_inventory[idx]["sheets"][s_name]["selected"] = checked
+                        state.fsdm_inventory = fsdm_inventory
+                        state.save_project()
+                        st.rerun()
+                    if s_info["indexed"]:
+                        s_col2.markdown(":green[In DB]")
+            
+            if col_rm.button("🗑️", key=f"del_fsdm_file_{idx}"):
+                # Remove from disk
+                ProjectManager.delete_file(state.current_project, item["name"])
+                
+                fsdm_inventory.pop(idx)
+                state.fsdm_inventory = fsdm_inventory
+                state.save_project()
+                st.rerun()
+        st.divider()
+
+    # --- 3. Action Buttons ---
+    if needs_db_sync:
+        if st.button("🗄️ Create DB / Sync Tables", type="primary", width='stretch'):
+            with st.spinner("Syncing to SQLite..."):
+                for idx, item in enumerate(fsdm_inventory):
+                    selected_sheets = [s for s, info in item["sheets"].items() if info["selected"] and not info["indexed"]]
+                    if selected_sheets:
+                        excel_to_sqlite(item["bytes"], state.current_project, selected_sheets)
+                        for s in selected_sheets:
+                            fsdm_inventory[idx]["sheets"][s]["indexed"] = True
+                
+                state.fsdm_inventory = fsdm_inventory
+                state.save_project()
+                st.success("SQLite DB updated!")
+                st.rerun()
+
+st.divider()
+
 #  Section 2: Mapping Configuration
 st.header("2. Configure Mapping Document")
 
@@ -228,6 +322,8 @@ if mapping_file:
     sheets = get_excel_sheets(file_bytes)
     selected_map_sheet = st.selectbox("Select Mapping Sheet", sheets, key="map_sheet_selector")
     state.mapping_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_map_sheet)
+    # Ingest into SQLite
+    ProjectManager.save_df_to_sql(state.current_project, "mapping_sheet", state.mapping_df)
     state.save_project()
 
 #  Even if mapping_file is None (on rerun), we might have mapping_df from previous upload

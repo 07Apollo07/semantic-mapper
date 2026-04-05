@@ -14,7 +14,7 @@ class AppState:
     
     PERSISTENT_KEYS = [
         "current_project",
-        "step", "kb_inventory", "mapping_df", "mapping_config", 
+        "step", "kb_inventory", "fsdm_inventory", "mapping_df", "mapping_config", 
         "results", "logs", "show_mapping_preview",
         "base_url", "api_key", "selected_model", "available_models", "agent_mode",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
@@ -32,6 +32,7 @@ class AppState:
             "current_project": None,
             "step": 1,
             "kb_inventory": [],
+            "fsdm_inventory": [],
             "results": [],
             "logs": [],
             "show_mapping_preview": False,
@@ -65,7 +66,7 @@ class AppState:
                 if k in meta and k not in st.session_state:
                     # For kb_inventory, we don't re-hydrate bytes here to avoid overhead
                     # unless it's explicitly needed. But simple strings/ints are fine.
-                    if k != "kb_inventory": 
+                    if k not in ["kb_inventory", "fsdm_inventory"]: 
                         st.session_state[k] = meta[k]
 
         # Objects that don't serialize easily to storage
@@ -82,7 +83,7 @@ class AppState:
         
         # Restore keys
         for k, v in meta.items():
-            if k == "kb_inventory":
+            if k in ["kb_inventory", "fsdm_inventory"]:
                  # Re-hydrate bytes
                  for item in v:
                      if "name" in item:
@@ -120,7 +121,7 @@ class AppState:
             if k in st.session_state:
                 val = st.session_state[k]
 
-                if k == "kb_inventory" and val:
+                if k in ["kb_inventory", "fsdm_inventory"] and val:
                     # Don't save large bytes to metadata.json
                     val_copy = copy.deepcopy(val)
                     for item in val_copy:
@@ -217,6 +218,15 @@ class AppState:
         self.save_project()
 
     @property
+    def fsdm_inventory(self) -> List[Dict[str, Any]]:
+        return st.session_state.get("fsdm_inventory", [])
+
+    @fsdm_inventory.setter
+    def fsdm_inventory(self, value: List[Dict[str, Any]]):
+        st.session_state["fsdm_inventory"] = value
+        self.save_project()
+
+    @property
     def v_manager(self) -> VectorStoreManager:
         return st.session_state.v_manager
 
@@ -293,6 +303,7 @@ class AppState:
 
     def reset_kb(self):
         self.kb_inventory = []
+        self.fsdm_inventory = []
         st.session_state.v_manager = VectorStoreManager()
         self.results = []
         self.clear_logs()

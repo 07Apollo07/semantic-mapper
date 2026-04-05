@@ -1,7 +1,6 @@
 import pandas as pd
 from typing import Dict, Any, List, Optional
 from agent.graph import create_agent
-from agent.react import create_react_agent_runnable
 from logic.utils import get_cell_value
 
 class AgentExecutor:
@@ -19,25 +18,16 @@ class AgentExecutor:
         llm_config = self.state.get_llm_config()
         retriever = self.state.v_manager.get_retriever()
         
-        mode = getattr(self.state, "agent_mode", "One-shot")
-        self._log(f"🤖 Initializing Agent in {mode} mode...")
+        self._log(f"🤖 Initializing ReAct Agent for project: {self.state.current_project}...")
 
-        if mode == "ReAct Agent":
-            self.agent = create_react_agent_runnable(
-                retriever,
-                model_name=llm_config["model_name"],
-                api_key=llm_config["api_key"],
-                base_url=llm_config["base_url"],
-                log_callback=self._log
-            )
-        else:
-            self.agent = create_agent(
-                retriever,
-                model_name=llm_config["model_name"],
-                api_key=llm_config["api_key"],
-                base_url=llm_config["base_url"],
-                log_callback=self._log
-            )
+        self.agent = create_agent(
+            retriever,
+            model_name=llm_config["model_name"],
+            api_key=llm_config["api_key"],
+            base_url=llm_config["base_url"],
+            log_callback=self._log,
+            project_name=self.state.current_project
+        )
 
     def _log(self, message: str):
         # Always log to state and print to console for "real-time" visibility
@@ -76,41 +66,16 @@ class AgentExecutor:
             "transformation_specs": transformation_specs
         }
 
-    def _get_retrieval_query(self, row_data: Dict[str, Any]) -> str:
-        s = row_data['source_info']
-        t = row_data['target_info']
-        query_parts = []
-        
-        def add_parts(prefix, val):
-            if not val or val == "N/A": return
-            sub_parts = [p.strip() for p in str(val).split(',') if p.strip()]
-            for p in sub_parts:
-                query_parts.append(f"{prefix}: {p}")
-
-        add_parts("Source DB", s.get('db_name'))
-        add_parts("Source Table", s.get('table_name'))
-        add_parts("Source Column", s.get('column_name'))
-        add_parts("Target DB", t.get('db_name'))
-        add_parts("Target Table", t.get('table_name'))
-        add_parts("Target Column", t.get('column_name'))
-        
-        return " | ".join(query_parts) if query_parts else "No specific source/target info provided."
-
     def process_row(self, row_data: Dict[str, Any], row_idx: int, feedback: Optional[str] = None) -> Dict[str, Any]:
         """Invokes the agent for a single row of data."""
         self._log(f"Processing Row {row_idx}: {row_data['source_info'].get('column_name')} -> {row_data['target_info'].get('column_name')}")
         
         try:
-            # For ReAct mode, we provide initial context just like One-shot, 
-            # but it has tools to find more.
-            retriever = self.state.v_manager.get_retriever()
-            query = self._get_retrieval_query(row_data)
-            docs = retriever.invoke(query)
-            initial_context = "\n\n".join([doc.page_content for doc in docs])
-
             inputs = {
                 **row_data,
-                "context": initial_context,
+                "project_name": self.state.current_project,
+                "messages": [],
+                "context": "",
                 "transformation_type": "",
                 "transformation_logic": "",
                 "reasoning": ""

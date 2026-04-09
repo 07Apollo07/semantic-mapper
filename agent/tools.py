@@ -3,6 +3,8 @@ from typing import Dict, Any, List
 from logic.project_manager import ProjectManager
 from langchain_community.utilities import SQLDatabase
 import os
+import pandas as pd
+import sqlite3
 
 @tool
 def fetch_vector_context(query: str, project_name: str) -> str:
@@ -73,6 +75,152 @@ def query_mapping_schema(sql_query: str, project_name: str) -> str:
     except Exception as e:
         return f"Error executing SQL: {str(e)}. Hint: Use list_tables_tool to check table names if you get 'no such table'."
 
+@tool
+def get_table_schema(table_name: str, project_name: str) -> str:
+    """
+    Returns the CREATE TABLE statement for a specific table.
+    Use this to see the exact columns and types for a table.
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    try:
+        return db.get_table_info([table_name])
+    except Exception as e:
+        return f"Error fetching schema: {str(e)}"
+
+@tool
+def sample_table_data(table_name: str, project_name: str, n: int = 5) -> str:
+    """
+    Returns the first N rows of a table to help understand the data format.
+    Use this if you are unsure about column values or formats.
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    try:
+        return db.run(f"SELECT * FROM \"{table_name}\" LIMIT {n}")
+    except Exception as e:
+        return f"Error sampling data: {str(e)}"
+
+@tool
+def get_business_schema_summary(project_name: str) -> str:
+    """
+    Analyzes the mapping metadata and FSDM tables to extract a structured summary 
+    of the actual business tables and columns mentioned in the rows.
+    Returns a format like:
+    Table Name:
+     - Column 1
+     - Column 2
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    
+    summary = []
+    
+    # 1. Analyze mapping_sheet
+    try:
+        df_map = pd.read_sql_query("SELECT * FROM mapping_sheet", sqlite3.connect(ProjectManager.get_db_path(project_name)))
+        if not df_map.empty:
+            summary.append("--- Business Entities from Mapping Sheet ---")
+            # Heuristically find source/target table and column columns
+            # We'll look for keywords in column names
+            tbl_cols = [c for c in df_map.columns if "tbl" in c.lower() or "table" in c.lower()]
+            col_cols = [c for c in df_map.columns if "col" in c.lower() or "field" in c.lower()]
+            
+            entities = {}
+            for _, row in df_map.iterrows():
+                for t_col in tbl_cols:
+                    t_name = str(row[t_col]).strip()
+                    if not t_name or t_name.lower() == "nan" or t_name.lower() == "none": continue
+                    if t_name not in entities: entities[t_name] = set()
+                    for c_col in col_cols:
+                        c_name = str(row[c_col]).strip()
+                        if not c_name or c_name.lower() == "nan" or c_name.lower() == "none": continue
+                        entities[t_name].add(c_name)
+            
+            for t, cols in entities.items():
+                summary.append(f"\nTable: {t}")
+                for c in sorted(list(cols)):
+                    summary.append(f" - {c}")
+    except Exception as e:
+        summary.append(f"Error mapping sheet: {str(e)}")
+
+    # 2. Analyze FSDM tables
+    try:
+        tables = db.get_usable_table_names()
+        fsdm_tables = [t for t in tables if "fsdm" in t.lower() or "etl" in t.lower()]
+        if fsdm_tables:
+            summary.append("\n--- Business Entities from FSDM/ETL Documentation ---")
+            for ft in fsdm_tables:
+                df_fsdm = pd.read_sql_query(f"SELECT * FROM {ft}", sqlite3.connect(ProjectManager.get_db_path(project_name)))
+                # Similar heuristic
+                tbl_cols = [c for c in df_fsdm.columns if "tbl" in c.lower() or "table" in c.lower()]
+                col_cols = [c for c in df_fsdm.columns if "col" in c.lower() or "field" in c.lower()]
+                
+                entities = {}
+                for _, row in df_fsdm.iterrows():
+                    for t_col in tbl_cols:
+                        t_name = str(row[t_col]).strip()
+                        if not t_name or t_name.lower() == "nan" or t_name.lower() == "none": continue
+                        if t_name not in entities: entities[t_name] = set()
+                        for c_col in col_cols:
+                            c_name = str(row[c_col]).strip()
+                            if not c_name or c_name.lower() == "nan" or c_name.lower() == "none": continue
+                            entities[t_name].add(c_name)
+                
+                for t, cols in entities.items():
+                    summary.append(f"\nTable: {t}")
+                    for c in sorted(list(cols)):
+                        summary.append(f" - {c}")
+    except Exception as e:
+        summary.append(f"Error FSDM: {str(e)}")
+        
+    if not summary:
+        return "No business entities could be extracted from metadata."
+        
+    return "\n".join(summary)
+
+@tool
+def search_documentation(query_term: str, project_name: str) -> str:
+    """
+    Searches all FSDM/ETL/Documentation tables for a specific term (e.g. table name or column name).
+    Returns all rows where the term is found. 
+    Use this to 'filter' the documentation sheets to reach a specific table's metadata.
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    
+    try:
+        tables = db.get_usable_table_names()
+        # Filter for tables specifically prefixed with fsdm_etl_ as per user instruction
+        doc_tables = [t for t in tables if t.lower().startswith("fsdm_etl_")]
+        
+        results = []
+        for table in doc_tables:
+            # We use a simple LIKE search on all text columns
+            columns_info = db.run(f"PRAGMA table_info(\"{table}\")")
+            import ast
+            cols = ast.literal_eval(columns_info)
+            col_names = [c[1] for c in cols]
+            
+            # Search for the term in all columns, limiting to 10 rows per table for conciseness
+            where_clauses = [f"\"{c}\" LIKE '%{query_term}%'" for c in col_names]
+            sql = f"SELECT * FROM \"{table}\" WHERE {' OR '.join(where_clauses)} LIMIT 10"
+            
+            try:
+                res = db.run(sql)
+                if res and res != "[]":
+                    results.append(f"\n--- {table} ---")
+                    results.append(res)
+            except:
+                continue
+                
+        if not results:
+            return f"No fsdm_etl_ documentation found for term: {query_term}"
+            
+        return "\n".join(results)
+    except Exception as e:
+        return f"Error searching documentation: {str(e)}"
+
 def get_tools(project_name: str, log_callback=None):
     """Returns a list of tools partially applied with the project_name and integrated logging."""
     
@@ -119,4 +267,28 @@ def get_tools(project_name: str, log_callback=None):
         _log(f"✅ [Tool: List Tables] Tables retrieved.")
         return res
 
-    return [vector_tool, fsdm_tool, mapping_tool, list_tables_tool]
+    @tool
+    def schema_tool(table_name: str) -> str:
+        """Get the detailed schema (CREATE TABLE) for a specific table."""
+        _log(f"📋 [Tool: Schema] Fetching schema for table: {table_name}")
+        res = get_table_schema.invoke({"table_name": table_name, "project_name": project_name})
+        _log(f"✅ [Tool: Schema] Schema retrieved.")
+        return res
+
+    @tool
+    def sample_data_tool(table_name: str, n: int = 5) -> str:
+        """Sample the first {n} rows of a table to see the data format."""
+        _log(f"📋 [Tool: Sample Data] Sampling {n} rows from: {table_name}")
+        res = sample_table_data.invoke({"table_name": table_name, "project_name": project_name, "n": n})
+        _log(f"✅ [Tool: Sample Data] Data sampled.")
+        return res
+
+    @tool
+    def business_schema_tool() -> str:
+        """Summarize the actual business tables and columns mentioned in the mapping/FSDM metadata rows."""
+        _log(f"📋 [Tool: Business Schema] Analyzing metadata rows for business logic...")
+        res = get_business_schema_summary.invoke({"project_name": project_name})
+        _log(f"✅ [Tool: Business Schema] Business schema summarized.")
+        return res
+
+    return [vector_tool, fsdm_tool, mapping_tool, list_tables_tool, schema_tool, sample_data_tool, business_schema_tool]

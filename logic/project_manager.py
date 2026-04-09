@@ -4,6 +4,8 @@ import json
 import pandas as pd
 from typing import List, Dict, Any, Optional
 import io
+import re # Import re for regex operations
+import sqlite3 # Import sqlite3 for database operations
 
 PROJECTS_DIR = "projects"
 
@@ -232,16 +234,117 @@ class ProjectManager:
     def save_df_to_sql(project_name: str, table_name: str, df: pd.DataFrame):
         import sqlite3
         import re
-        
+
         # Sanitize table name
         sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name).lower()
         if sanitized_name[0].isdigit():
             sanitized_name = "t_" + sanitized_name
-            
+
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         try:
-            df.to_sql(sanitized_name, conn, if_exists='replace', index=False)
+            if df.empty and len(df.columns) == 0:
+                # An empty DataFrame with no columns produces invalid SQL like
+                # CREATE TABLE foo () which SQLite rejects with "near ')'".
+                # Just DROP the table so the slate is clean.
+                conn.execute(f"DROP TABLE IF EXISTS {sanitized_name}")
+                conn.commit()
+            else:
+                df.to_sql(sanitized_name, conn, if_exists='replace', index=False)
         finally:
             conn.close()
         return sanitized_name
+
+    @staticmethod
+    def rebuild_mapping_from_config(project_name: str, df: pd.DataFrame, mapping_config_identifiers: List[str]):
+        """
+        Filters the original Excel DataFrame based on column identifiers (titles or letters) 
+        and saves the result to the 'mapping_sheet' table in SQLite.
+        """
+        import pandas as pd
+        from .utils import excel_col_to_idx
+
+        selected_indices = []
+        # Default to empty
+        filtered_df = pd.DataFrame()
+
+        if df is not None:
+            for ident in mapping_config_identifiers:
+                if not ident:
+                    continue  # Skip empty identifiers
+
+                # Try direct column name first
+                if ident in df.columns:
+                    selected_indices.append(df.columns.get_loc(ident))
+                else:
+                    # Fallback: interpret as Excel-style column letter (A, B, AA ...)
+                    idx = excel_col_to_idx(ident)
+                    if idx is not None and 0 <= idx < len(df.columns):
+                        selected_indices.append(idx)
+
+            unique_indices = sorted(set(selected_indices))
+
+            if unique_indices:
+                filtered_df = df.iloc[:, unique_indices]
+        
+        # Save the filtered DataFrame to the mapping_sheet table
+        ProjectManager.save_df_to_sql(project_name, "mapping_sheet", filtered_df)
+        return filtered_df
+
+    @staticmethod
+    def load_df_from_sql(project_name: str, table_name: str) -> pd.DataFrame:
+        """Loads a table from the project's SQLite DB into a DataFrame."""
+        import sqlite3
+        import re
+
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name).lower()
+        if sanitized_name[0].isdigit():
+            sanitized_name = "t_" + sanitized_name
+
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return pd.DataFrame()
+
+        conn = sqlite3.connect(db_path)
+        try:
+            df = pd.read_sql_query(f"SELECT * FROM {sanitized_name}", conn)
+            return df
+        except Exception:
+            return pd.DataFrame()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def drop_excel_sheets_from_db(project_name: str, filename: str, sheets_info: Dict[str, Dict[str, Any]]):
+        """Drops SQLite tables corresponding to indexed sheets of a deleted Excel file."""
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        tables_dropped = []
+        for sheet_name, info in sheets_info.items():
+            if info.get("indexed", False): # Only drop if it was indexed (i.e., present in DB)
+                base_table_name = "FSDM/ETL_" + sheet_name
+                # Apply the same sanitization and prefixing as save_df_to_sql
+                sanitized_base = re.sub(r'[^a-zA-Z0-9_]', '_', base_table_name).lower()
+                if sanitized_base.startswith("t_"): # Check if it already has the prefix from save_df_to_sql
+                    actual_table_name = sanitized_base
+                elif sanitized_base[0].isdigit():
+                    actual_table_name = "t_" + sanitized_base
+                else:
+                    actual_table_name = sanitized_base # Should not happen with FSDM/ETL prefix, but for completeness
+                
+                try:
+                    cursor.execute(f"DROP TABLE IF EXISTS {actual_table_name}")
+                    print(f"Dropped table '{actual_table_name}' for sheet '{sheet_name}' from project '{project_name}'.")
+                    tables_dropped.append(actual_table_name)
+                except sqlite3.Error as e:
+                    print(f"Error dropping table '{actual_table_name}' for sheet '{sheet_name}' in project '{project_name}': {e}")
+        
+        if tables_dropped:
+            conn.commit()
+            print(f"Dropped tables: {', '.join(tables_dropped)}")
+        else:
+            print(f"No indexed sheets found for file '{filename}' in project '{project_name}' to drop from DB.")
+        
+        conn.close()

@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import Dict, Any, List, Optional
-from agent.graph import create_agent
+from agent.graph import create_agent, create_intent_agent
 from logic.utils import get_cell_value
 
 class AgentExecutor:
@@ -120,17 +120,11 @@ class AgentExecutor:
                 self._log(f"🔄 [Agent] Retry attempt {attempt}/{max_retries} for Row {row_idx}...")
             
             try:
-                # The agent graph is stateful if we keep passing the same inputs? 
-                # No, invoke() starts fresh unless we use checkpoints.
-                # We want the agent to learn from its previous failure in the same session.
-                # Since we don't have checkpoints here, we'll append a "nudge" to messages if it fails.
-                
                 res = self.agent.invoke(inputs)
-                
                 
                 # Log assistant messages and tool calls
                 if "messages" in res:
-                    for msg in res["messages"]:
+                    for msg_idx, msg in enumerate(res["messages"]):
                         role = "Assistant"
                         if hasattr(msg, "type"):
                             role = msg.type.capitalize()
@@ -144,14 +138,16 @@ class AgentExecutor:
                             content = msg["content"]
                         
                         if content:
-                            self._log(f"🗨️ [{role}]: {content}")
+                            # Truncate long content for logs
+                            log_content = content[:200] + "..." if len(content) > 200 else content
+                            self._log(f"🗨️ [{role} - Step {msg_idx}]: {log_content}")
                         
                         if hasattr(msg, "tool_calls") and msg.tool_calls:
                             for tc in msg.tool_calls:
                                 self._log(f"🛠️ [Tool Call]: {tc['name']}({tc['args']})")
-
+                
                 # Validation: Did we get the structured output?
-                if res.get('transformation_logic') and res.get('transformation_type'):
+                if res.get('transformation_logic') and res.get('transformation_type') != "ERROR":
                     self._log(f"✅ [Agent] Success Row {row_idx}: {res.get('transformation_type')}")
                     return {
                         "row_idx": row_idx,
@@ -161,12 +157,9 @@ class AgentExecutor:
                         **res
                     }
                 else:
-                    self._log(f"⚠️ [Agent] Row {row_idx}: Attempt {attempt} did not yield structured output.")
-                    # Add a nudge to the message history for the next attempt
-                    from langchain_core.messages import HumanMessage
-                    inputs["messages"] = res.get("messages", []) + [
-                        HumanMessage(content="System: You must provide your final answer using the TransformationOutput tool. If you are stuck, use your tools to find information. Do not stop until the mapping logic is generated.")
-                    ]
+                    self._log(f"⚠️ [Agent] Row {row_idx}: Attempt {attempt} failed to yield valid logic.")
+                    # Add feedback for the next attempt
+                    inputs["feedback"] = f"Previous attempt failed. Please ensure you use the TransformationOutput tool correctly. Details: {res.get('reasoning', 'Unknown error')}"
                     
             except Exception as e:
                 self._log(f"❌ [Agent] Error on attempt {attempt}: {str(e)}")
@@ -190,66 +183,45 @@ class AgentExecutor:
         }
 
     def generate_insight(self, row_data: Dict[str, Any], feedback: Optional[str] = None) -> str:
-        """Generates a technical hypothesis/intent for a row before mapping."""
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import HumanMessage, SystemMessage
-        
+        """Generates a technical hypothesis/intent for a row using the Intent Agent."""
         llm_config = self.state.get_llm_config()
         if not llm_config.get("model_name"):
             self._log("⚠️ [Preprocessing] LLM Model not selected.")
             return "Please configure LLM in the sidebar first."
 
-        self._log(f"🔍 [Preprocessing] Generating insight for Row {row_data['row_idx']}...")
+        self._log(f"🔍 [Preprocessing] Generating robust insight for Row {row_data['row_idx']}...")
+        
+        retriever = self.state.v_manager.get_retriever()
         
         try:
-            llm = ChatOpenAI(
-                model=llm_config["model_name"],
-                temperature=0.3,
-                api_key=llm_config["api_key"] if llm_config["api_key"] and llm_config["api_key"].strip() != "" else "not-needed",
-                base_url=f"{llm_config['base_url'].rstrip('/')}/v1" if llm_config['base_url'] else None
+            intent_agent = create_intent_agent(
+                retriever,
+                model_name=llm_config["model_name"],
+                api_key=llm_config["api_key"],
+                base_url=llm_config["base_url"],
+                log_callback=self._log,
+                project_name=self.state.current_project
             )
             
-            s = row_data['source_info']
-            t = row_data['target_info']
-            sp = row_data['transformation_specs']
+            inputs = {
+                **row_data,
+                "project_name": self.state.current_project,
+                "global_instructions": self.state.global_instructions,
+                "messages": [],
+                "feedback": feedback if feedback else ""
+            }
             
-            # Get context from vector store for the insight
-            retriever = self.state.v_manager.get_retriever()
-            query = f"Source Table: {s.get('table_name')} | Source Column: {s.get('column_name')} | Target Table: {t.get('table_name')} | Target Column: {t.get('column_name')}"
+            res = intent_agent.invoke(inputs)
             
-            self._log(f"🔍 [Preprocessing] Retrieval Query: {query}")
-            docs = retriever.invoke(query)
-            context = "\n\n".join([doc.page_content for doc in docs])
-            self._log(f"📄 [Preprocessing] Retrieved {len(docs)} context snippets.")
-            if context:
-                self._log(f"📝 [Preprocessing] Context Sample: {context}")
+            # The process_node in intent_agent sets 'pre_mapping_insight'
+            insight = res.get("pre_mapping_insight", "Failed to generate structured insight.")
+            
+            if insight:
+                self._log(f"✨ [Preprocessing] Insight generated for Row {row_data['row_idx']}.")
+                return insight
+            else:
+                return "Error: Intent agent did not return an insight."
 
-            system_prompt = "You are a data architect. Your goal is to provide a clear technical hypothesis of how a source column should be mapped to a target semantic column based on the provided metadata and documentation. Focus on the business logic and lineage."
-            
-            user_content = f"""
-            Provide a concise technical hypothesis (2-3 sentences) for this mapping:
-            
-            SOURCE: {s.get('table_name')}.{s.get('column_name')} ({s.get('datatype')})
-            TARGET: {t.get('table_name')}.{t.get('column_name')} ({t.get('datatype')})
-            SPECS: {sp.get('type')} | {sp.get('condition')}
-            
-            DOCUMENTATION CONTEXT:
-            {context if context else "No documentation found."}
-            
-            GLOBAL INSTRUCTIONS:
-            {self.state.global_instructions}
-            """
-            
-            if feedback:
-                user_content += f"\n\nUSER HINTS/FEEDBACK:\n{feedback}\n\nPlease adjust the hypothesis based on these hints."
-            
-            self._log(f"🗨️ [Preprocessing] Prompting LLM...")
-            response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_content)])
-            insight = response.content
-            
-            self._log(f"🗨️ [Assistant]: {insight}")
-            self._log(f"✨ [Preprocessing] Insight generated for Row {row_data['row_idx']}.")
-            return insight
         except Exception as e:
             self._log(f"❌ [Preprocessing] Error generating insight: {str(e)}")
             return f"Error generating insight: {str(e)}"

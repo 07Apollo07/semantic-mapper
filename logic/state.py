@@ -22,7 +22,7 @@ class AppState:
         "map_trans_type", "map_trans_cond", "map_remarks",
         "map_sheet_selector",
         "auto_scroll", "mapping_active",
-        "selected_target_table", "global_instructions", "preprocessing_active", "current_mapping_step"
+        "selected_target_table", "global_instructions", "preprocessing_active", "preprocessing_idx", "current_mapping_step"
     ]
 
     def __init__(self):
@@ -49,6 +49,7 @@ class AppState:
             "selected_target_table": None,
             "global_instructions": "",
             "preprocessing_active": False,
+            "preprocessing_idx": 0,
             "current_mapping_step": "CONFIG"
         }
         for k, v in defaults.items():
@@ -299,6 +300,15 @@ class AppState:
     @preprocessing_active.setter
     def preprocessing_active(self, value: bool):
         st.session_state["preprocessing_active"] = value
+        self.save_project()
+
+    @property
+    def preprocessing_idx(self) -> int:
+        return st.session_state.get("preprocessing_idx", 0)
+
+    @preprocessing_idx.setter
+    def preprocessing_idx(self, value: int):
+        st.session_state["preprocessing_idx"] = value
         self.save_project()
 
     @property

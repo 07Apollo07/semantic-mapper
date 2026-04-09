@@ -284,6 +284,11 @@ if state.fsdm_inventory:
                         s_col2.markdown(":green[In DB]")
             
             if col_rm.button("🗑️", key=f"del_fsdm_file_{idx}"):
+                # --- NEW LOGIC START ---
+                # Drop associated tables from DB before deleting the file
+                ProjectManager.drop_excel_sheets_from_db(state.current_project, item["name"], item["sheets"])
+                # --- NEW LOGIC END ---
+
                 # Remove from disk
                 ProjectManager.delete_file(state.current_project, item["name"])
                 
@@ -323,7 +328,7 @@ if mapping_file:
     selected_map_sheet = st.selectbox("Select Mapping Sheet", sheets, key="map_sheet_selector")
     state.mapping_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_map_sheet)
     # Ingest into SQLite
-    ProjectManager.save_df_to_sql(state.current_project, "mapping_sheet", state.mapping_df)
+    # ProjectManager.save_df_to_sql(state.current_project, "mapping_sheet", state.mapping_df)
     state.save_project()
 
 #  Even if mapping_file is None (on rerun), we might have mapping_df from previous upload
@@ -358,6 +363,22 @@ if state.mapping_df is not None:
     tr_cond = c_tr2.text_input("Transf. Condition Column", value=state.map_trans_cond, placeholder="e.g. L", key="map_trans_cond")
     tr_remarks = c_tr3.text_input("Remarks Column", value=state.map_remarks, placeholder="e.g. M", key="map_remarks")
 
+    # --- Column Configuration Identifiers ---
+    mapping_config_identifiers = [
+        s_subj, s_db, s_tbl, s_col, s_type,
+        t_subj, t_db, t_tbl, t_col, t_type,
+        tr_type, tr_cond, tr_remarks
+    ]
+
+    # --- Column-config change detection: rebuild mapping_sheet ---
+    _col_sig = "|".join([str(i) for i in mapping_config_identifiers])
+    if st.session_state.get("col_config_sig") != _col_sig:
+        if st.session_state.get("col_config_sig") is not None and state.current_project and state.mapping_df is not None:
+            # Config changed — drop and rebuild the mapping_sheet table
+            ProjectManager.rebuild_mapping_from_config(state.current_project, state.mapping_df, mapping_config_identifiers)
+            st.session_state.show_mapping_preview = False
+        st.session_state["col_config_sig"] = _col_sig
+
     st.divider()
     st.subheader("Project-Wide Instructions 🌐")
     state.global_instructions = st.text_area("Global Instructions (e.g., standard null handling, date formats)", value=state.global_instructions, height=100)
@@ -379,8 +400,12 @@ if state.mapping_df is not None:
     state.selected_target_table = st.selectbox("Target Table to Process", options=target_tables, index=0 if state.selected_target_table in target_tables else 0 if target_tables else None)
 
     if st.button("🔍 Preview & Prepare Table", width='stretch'):
+        # Rebuild based on latest config
+        ProjectManager.rebuild_mapping_from_config(state.current_project, state.mapping_df, mapping_config_identifiers)
+        
         st.session_state.show_mapping_preview = True
         state.save_project()
+        st.rerun()
 else:
     st.info("Please upload a mapping Excel file to begin.")
     # Default variables to avoid NameErrors
@@ -393,13 +418,23 @@ if st.session_state.get("show_mapping_preview") and state.mapping_df is not None
     st.divider()
     st.header(f"🔍 Table Scope: {state.selected_target_table}")
     
-    # Filter DF by selected target table
+    # Load the column-filtered mapping data from the DB for preview
+    preview_base_df = ProjectManager.load_df_from_sql(state.current_project, "mapping_sheet")
+    # Ensure it's a DataFrame if empty or failed to load
+    if not isinstance(preview_base_df, pd.DataFrame):
+        preview_base_df = pd.DataFrame()
+
+    # Filter loaded DataFrame by selected target table
     t_tbl_col = state.map_t_tbl
-    if t_tbl_col in state.mapping_df.columns:
-        filtered_df = state.mapping_df[state.mapping_df[t_tbl_col].astype(str).str.strip() == state.selected_target_table]
+    if t_tbl_col in preview_base_df.columns: # Check column existence in preview_base_df
+        filtered_df = preview_base_df[preview_base_df[t_tbl_col].astype(str).str.strip() == state.selected_target_table]
     else:
         idx = excel_col_to_idx(t_tbl_col)
-        filtered_df = state.mapping_df[state.mapping_df.iloc[:, idx].astype(str).str.strip() == state.selected_target_table]
+        # Check if idx is valid and preview_base_df has enough columns
+        if idx is not None and 0 <= idx < len(preview_base_df.columns):
+            filtered_df = preview_base_df[preview_base_df.iloc[:, idx].astype(str).str.strip() == state.selected_target_table]
+        else:
+            filtered_df = pd.DataFrame() # Handle cases where column is not found or df is too narrow
 
     st.info(f"Found {len(filtered_df)} rows for target table `{state.selected_target_table}`.")
     with st.expander("View Filtered Rows"):
@@ -434,6 +469,31 @@ if st.session_state.get("show_mapping_preview") and state.mapping_df is not None
             existing_mappings[row_idx] = row_info
             
         rows_to_process.append(existing_mappings[row_idx])
+
+    # --- Batch Intent Generation Controls ---
+    unverified_intents = [m for m in rows_to_process if m.get('validation_status') == 'Pending']
+    col_batch1, col_batch2 = st.columns(2)
+    with col_batch1:
+        batch_label = f"🤖 Generate Intent for All Rows ({len(unverified_intents)} unverified)"
+        if st.button(batch_label, type="primary", use_container_width=True, disabled=len(unverified_intents) == 0 or state.preprocessing_active):
+            state.preprocessing_active = True
+            state.preprocessing_idx = 0
+            state.save_project()
+            st.rerun()
+    with col_batch2:
+        if st.button("🛑 Stop Intent Generation", type="secondary", use_container_width=True, disabled=not state.preprocessing_active):
+            state.preprocessing_active = False
+            state.preprocessing_idx = 0
+            state.save_project()
+            st.rerun()
+    
+    if state.preprocessing_active:
+        total_rows = len(rows_to_process)
+        completed_intents = len([m for m in rows_to_process if m.get('pre_mapping_insight')])
+        st.progress(completed_intents / total_rows if total_rows > 0 else 0)
+        st.info(f"Generating intents: {completed_intents}/{total_rows} completed...")
+    
+    st.divider()
 
     # Display Preprocessing UI
     for m in rows_to_process:
@@ -640,6 +700,42 @@ st.divider()
 # Section 4: Logs
 st.header("4. Application Logs 📑"  )
 display_logs(state, height=400, key_prefix="main_logs")
+
+# --- Preprocessing Loop (Batch Intent Generation) ---
+if state.preprocessing_active:
+    # If already processing, show status and stop to avoid re-triggering
+    if st.session_state.get("processing_intent", False):
+        st.info("Generating intent...")
+        st.stop()
+
+    # Get ALL rows for the table
+    db_rows = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
+    
+    if state.preprocessing_idx < len(db_rows):
+        m = db_rows[state.preprocessing_idx]
+        
+        # Only process if status is Pending (unverified)
+        if m.get('validation_status') == 'Pending':
+            st.session_state["processing_intent"] = True
+            executor = AgentExecutor(state)
+            row_idx = m['row_idx']
+            
+            # Generate insight
+            insight = executor.generate_insight(m)
+            ProjectManager.update_mapping_validation(state.current_project, row_idx, {"pre_mapping_insight": insight})
+            st.session_state[f"ins_val_{row_idx}"] = insight
+            st.session_state["processing_intent"] = False
+
+        # Increment index and rerun
+        state.preprocessing_idx += 1
+        st.rerun()
+    else:
+        # Completion Check
+        state.preprocessing_active = False
+        state.preprocessing_idx = 0
+        state.save_project()
+        st.rerun()
+
 
 # --- Mapping Execution Loop (State Machine) ---
 if state.mapping_active:

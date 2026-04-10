@@ -39,17 +39,18 @@ class ProjectManager:
         return os.path.join(PROJECTS_DIR, name)
 
     @staticmethod
-    def save_file(project_name: str, filename: str, file_bytes: bytes) -> str:
-        """Saves a file to the project's files directory."""
-        path = os.path.join(PROJECTS_DIR, project_name, "files", filename)
+    def save_file(project_name: str, filename: str, file_bytes: bytes, sub_dir: str = "files") -> str:
+        """Saves a file to the project's sub-directory within files."""
+        path = os.path.join(PROJECTS_DIR, project_name, sub_dir, filename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(file_bytes)
         return path
 
     @staticmethod
-    def load_file(project_name: str, filename: str) -> Optional[bytes]:
-        """Loads a file from the project's files directory."""
-        path = os.path.join(PROJECTS_DIR, project_name, "files", filename)
+    def load_file(project_name: str, filename: str, sub_dir: str = "files") -> Optional[bytes]:
+        """Loads a file from the project's sub-directory within files."""
+        path = os.path.join(PROJECTS_DIR, project_name, sub_dir, filename)
         if os.path.exists(path):
             with open(path, "rb") as f:
                 return f.read()
@@ -138,8 +139,42 @@ class ProjectManager:
                 reasoning TEXT
             )
         """)
+
+        # Create instructions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS instructions (
+                scope TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def save_instructions(project_name: str, scope: str, value: str):
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO instructions (scope, value) VALUES (?, ?)
+        """, (scope, value))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_instructions(project_name: str, scope: str) -> str:
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return ""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM instructions WHERE scope = ?", (scope,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else ""
 
     @staticmethod
     def save_mapping_row(project_name: str, row_data: Dict[str, Any]):
@@ -231,15 +266,18 @@ class ProjectManager:
             conn.close()
 
     @staticmethod
-    def save_df_to_sql(project_name: str, table_name: str, df: pd.DataFrame):
-        import sqlite3
-        import re
-
-        # Sanitize table name
+    def get_sanitized_table_name(table_name: str) -> str:
+        """Centralized sanitization for FSDM table names."""
         sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name).lower()
         if sanitized_name[0].isdigit():
             sanitized_name = "t_" + sanitized_name
+        return sanitized_name
 
+    @staticmethod
+    def save_df_to_sql(project_name: str, table_name: str, df: pd.DataFrame):
+        import sqlite3
+        
+        sanitized_name = ProjectManager.get_sanitized_table_name(table_name)
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         try:

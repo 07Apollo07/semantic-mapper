@@ -2,18 +2,18 @@ import streamlit as st
 import pandas as pd
 import io
 from logic import (
-    process_pdf, 
     get_excel_sheets, 
-    process_excel_sheets, 
-    excel_to_sqlite,
-    split_documents, 
     excel_col_to_idx,
     AppState,
     ProjectManager
 )
+from logic.fsdm.service import FSDMService
+from logic.mapping.config import MappingConfig
+from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
 from agent import create_agent, AgentExecutor
-from ui import sidebar_config, display_logs
+from ui import sidebar_config, display_logs, render_mapping_selection, render_fsdm_discovery_ui
+# from agent.agents.test_fsdm import render_fsdm_test
 
 st.set_page_config(page_title="Semantic Mapper AI", layout="wide")
 
@@ -87,7 +87,7 @@ if uploaded_files:
             file_bytes = f.read()
             
             # Save to disk
-            ProjectManager.save_file(state.current_project, f.name, file_bytes)
+            ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/vs")
             
             if f.name.endswith(".pdf"):
                 inventory.append({
@@ -167,12 +167,7 @@ if state.kb_inventory:
             
             if col_rm.button("🗑️", key=f"del_file_{idx}"):
                 # Remove from vector store
-                if item["type"] == "pdf" and item["indexed"]:
-                    state.v_manager.remove_document(item["name"])
-                elif item["type"] == "excel":
-                    for s_name, s_info in item["sheets"].items():
-                        if s_info["indexed"]:
-                            state.v_manager.remove_document(item["name"], s_name)
+                state.v_service.remove_source(item["name"])
                 
                 # Remove from disk
                 ProjectManager.delete_file(state.current_project, item["name"])
@@ -188,24 +183,7 @@ if state.kb_inventory:
     if needs_sync:
         if col_btn1.button("🔄 Sync with Vector Store", type="primary", width='stretch'):
             with st.spinner("Syncing changes..."):
-                for idx, item in enumerate(inventory):
-                    if item["type"] == "pdf":
-                        if item["selected"] and not item["indexed"]:
-                            chunks = split_documents(process_pdf(item["bytes"], item["name"]))
-                            state.v_manager.add_documents(chunks)
-                            inventory[idx]["indexed"] = True
-                        elif not item["selected"] and item["indexed"]:
-                            state.v_manager.remove_document(item["name"])
-                            inventory[idx]["indexed"] = False
-                    else: # Excel
-                        for s_name, s_info in item["sheets"].items():
-                            if s_info["selected"] and not s_info["indexed"]:
-                                chunks = split_documents(process_excel_sheets(item["bytes"], item["name"], [s_name]))
-                                state.v_manager.add_documents(chunks)
-                                inventory[idx]["sheets"][s_name]["indexed"] = True
-                            elif not s_info["selected"] and s_info["indexed"]:
-                                state.v_manager.remove_document(item["name"], s_name)
-                                inventory[idx]["sheets"][s_name]["indexed"] = False
+                state.v_service.sync_project(inventory)
                 state.kb_inventory = inventory
                 state.save_project()
                 st.success("Vector Store synced!")
@@ -232,7 +210,7 @@ if fsdm_uploaded_files:
             file_bytes = f.read()
             
             # Save to disk
-            ProjectManager.save_file(state.current_project, f.name, file_bytes)
+            ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/fsdm")
             
             sheets = get_excel_sheets(file_bytes)
             fsdm_inventory.append({
@@ -273,7 +251,7 @@ if state.fsdm_inventory:
             col_name.markdown(f"📊 **{item['name']}**")
             with col_name.expander("Show Sheets"):
                 for s_name, s_info in sheets_data.items():
-                    s_col1, s_col2 = st.columns([3, 1])
+                    s_col1, s_col2, s_col3 = st.columns([3, 1, 1])
                     checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_fsdm_{item['name']}_{s_name}")
                     if checked != s_info["selected"]:
                         fsdm_inventory[idx]["sheets"][s_name]["selected"] = checked
@@ -282,11 +260,19 @@ if state.fsdm_inventory:
                         st.rerun()
                     if s_info["indexed"]:
                         s_col2.markdown(":green[In DB]")
+                        s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_{item['name']}_{s_name}", disabled=True)
+                    elif s_info["selected"]:
+                        merge_check = s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_{item['name']}_{s_name}")
+                        if merge_check != s_info.get("combine_headers", False):
+                            fsdm_inventory[idx]["sheets"][s_name]["combine_headers"] = merge_check
+                            state.fsdm_inventory = fsdm_inventory
+                            state.save_project()
+                            st.rerun()
             
             if col_rm.button("🗑️", key=f"del_fsdm_file_{idx}"):
                 # --- NEW LOGIC START ---
                 # Drop associated tables from DB before deleting the file
-                ProjectManager.drop_excel_sheets_from_db(state.current_project, item["name"], item["sheets"])
+                FSDMService.delete_all_tables_for_item(state.current_project, item)
                 # --- NEW LOGIC END ---
 
                 # Remove from disk
@@ -303,11 +289,7 @@ if state.fsdm_inventory:
         if st.button("🗄️ Create DB / Sync Tables", type="primary", width='stretch'):
             with st.spinner("Syncing to SQLite..."):
                 for idx, item in enumerate(fsdm_inventory):
-                    selected_sheets = [s for s, info in item["sheets"].items() if info["selected"] and not info["indexed"]]
-                    if selected_sheets:
-                        excel_to_sqlite(item["bytes"], state.current_project, selected_sheets)
-                        for s in selected_sheets:
-                            fsdm_inventory[idx]["sheets"][s]["indexed"] = True
+                    fsdm_inventory[idx] = FSDMService.sync(state.current_project, item)
                 
                 state.fsdm_inventory = fsdm_inventory
                 state.save_project()
@@ -317,107 +299,157 @@ if state.fsdm_inventory:
 st.divider()
 
 #  Section 2: Mapping Configuration
-st.header("2. Configure Mapping Document")
+st.header("2. Configure Mapping Documents")
 
-mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"], key="map_uploader")
+# --- 1. Multi-File Uploader ---
+mapping_files = st.file_uploader("Upload Mapping Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="map_uploader")
 
-#  Process new upload
-if mapping_file:
-    file_bytes = mapping_file.read()
-    sheets = get_excel_sheets(file_bytes)
-    selected_map_sheet = st.selectbox("Select Mapping Sheet", sheets, key="map_sheet_selector")
-    state.mapping_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_map_sheet)
-    # Ingest into SQLite
-    # ProjectManager.save_df_to_sql(state.current_project, "mapping_sheet", state.mapping_df)
+if mapping_files:
+    inventory = state.mapping_inventory or []
+    # Inventory update logic
+    for f in mapping_files:
+        if not any(item["name"] == f.name for item in inventory):
+            f.seek(0)
+            file_bytes = f.read()
+            ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/mapping")
+            
+            sheets = get_excel_sheets(file_bytes)
+            inventory.append({
+                "name": f.name,
+                "sheets": {s: {"selected": False, "config": MappingConfig().__dict__} for s in sheets}
+            })
+    state.mapping_inventory = inventory
     state.save_project()
 
-#  Even if mapping_file is None (on rerun), we might have mapping_df from previous upload
-if state.mapping_df is not None:
-    df = state.mapping_df
-    st.write("### Raw Data Preview")
-    st.dataframe(df.head(), width='stretch')
-
-    st.divider()
-    st.subheader("Map Columns")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### Target Fields")
-        t_subj = st.text_input("Target Subject Area", value=state.map_t_subj, placeholder="e.g. F", key="map_t_subj")
-        t_db = st.text_input("Target DB Name", value=state.map_t_db, placeholder="e.g. G", key="map_t_db")
-        t_tbl = st.text_input("Target Table Name", value=state.map_t_tbl, placeholder="e.g. H", key="map_t_tbl")
-        t_col = st.text_input("Target Column Name", value=state.map_t_col, placeholder="e.g. I", key="map_t_col")
-        t_type = st.text_input("Target Datatype", value=state.map_t_type, placeholder="e.g. J", key="map_t_type")
-
-    with col2:
-        st.markdown("### Source Fields")
-        s_subj = st.text_input("Subject Area Column", value=state.map_s_subj, placeholder="e.g. A", key="map_s_subj")
-        s_db = st.text_input("DB Name Column", value=state.map_s_db, placeholder="e.g. B", key="map_s_db")
-        s_tbl = st.text_input("Table Name Column", value=state.map_s_tbl, placeholder="e.g. C", key="map_s_tbl")
-        s_col = st.text_input("Column Name Column", value=state.map_s_col, placeholder="e.g. D", key="map_s_col")
-        s_type = st.text_input("Datatype Column", value=state.map_s_type, placeholder="e.g. E", key="map_s_type")
+# --- 2. Mapping Dashboard ---
+if state.mapping_inventory:
+    st.subheader("Manage Mapping Sheets")
     
-    st.subheader("Transformation Specs")
-    c_tr1, c_tr2, c_tr3 = st.columns(3)
-    tr_type = c_tr1.text_input("Transf. Type Column", value=state.map_trans_type, placeholder="e.g. K", key="map_trans_type")
-    tr_cond = c_tr2.text_input("Transf. Condition Column", value=state.map_trans_cond, placeholder="e.g. L", key="map_trans_cond")
-    tr_remarks = c_tr3.text_input("Remarks Column", value=state.map_remarks, placeholder="e.g. M", key="map_remarks")
+    for idx, item in enumerate(state.mapping_inventory):
+        with st.expander(f"📁 {item['name']}", expanded=False):
+            for s_name, s_info in item["sheets"].items():
+                s_col1, s_col2 = st.columns([3, 1])
+                checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_map_{item['name']}_{s_name}")
+                
+                # Sync status indicator
+                status = s_info.get("sync_status", "Pending")
+                s_col2.caption(f"Status: {status}")
 
-    # --- Column Configuration Identifiers ---
-    mapping_config_identifiers = [
-        s_subj, s_db, s_tbl, s_col, s_type,
-        t_subj, t_db, t_tbl, t_col, t_type,
-        tr_type, tr_cond, tr_remarks
-    ]
+                if checked != s_info["selected"]:
+                    state.mapping_inventory[idx]["sheets"][s_name]["selected"] = checked
+                    state.save_project()
+                    st.rerun()
+                
+                if checked:
+                    with st.expander(f"⚙️ Config for {s_name}"):
+                        cfg = s_info["config"]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("### Target Fields")
+                            cfg["target_fields"]["subj"] = st.text_input("Target Subject Area", value=cfg["target_fields"]["subj"], key=f"t_subj_{item['name']}_{s_name}")
+                            cfg["target_fields"]["db"] = st.text_input("Target DB Name", value=cfg["target_fields"]["db"], key=f"t_db_{item['name']}_{s_name}")
+                            cfg["target_fields"]["tbl"] = st.text_input("Target Table Name", value=cfg["target_fields"]["tbl"], key=f"t_tbl_{item['name']}_{s_name}")
+                            cfg["target_fields"]["col"] = st.text_input("Target Column Name", value=cfg["target_fields"]["col"], key=f"t_col_{item['name']}_{s_name}")
+                            cfg["target_fields"]["type"] = st.text_input("Target Datatype", value=cfg["target_fields"]["type"], key=f"t_type_{item['name']}_{s_name}")
 
-    # --- Column-config change detection: rebuild mapping_sheet ---
-    _col_sig = "|".join([str(i) for i in mapping_config_identifiers])
-    if st.session_state.get("col_config_sig") != _col_sig:
-        if st.session_state.get("col_config_sig") is not None and state.current_project and state.mapping_df is not None:
-            # Config changed — drop and rebuild the mapping_sheet table
-            ProjectManager.rebuild_mapping_from_config(state.current_project, state.mapping_df, mapping_config_identifiers)
-            st.session_state.show_mapping_preview = False
-        st.session_state["col_config_sig"] = _col_sig
+                        with col2:
+                            st.markdown("### Source Fields")
+                            cfg["source_fields"]["subj"] = st.text_input("Subject Area Column", value=cfg["source_fields"]["subj"], key=f"s_subj_{item['name']}_{s_name}")
+                            cfg["source_fields"]["db"] = st.text_input("DB Name Column", value=cfg["source_fields"]["db"], key=f"s_db_{item['name']}_{s_name}")
+                            cfg["source_fields"]["tbl"] = st.text_input("Table Name Column", value=cfg["source_fields"]["tbl"], key=f"s_tbl_{item['name']}_{s_name}")
+                            cfg["source_fields"]["col"] = st.text_input("Column Name Column", value=cfg["source_fields"]["col"], key=f"s_col_{item['name']}_{s_name}")
+                            cfg["source_fields"]["type"] = st.text_input("Datatype Column", value=cfg["source_fields"]["type"], key=f"s_type_{item['name']}_{s_name}")
+                        
+                        st.subheader("Transformation Specs")
+                        c_tr1, c_tr2, c_tr3, c_tr4 = st.columns(4)
+                        cfg["trans_fields"]["type"] = c_tr1.text_input("Transf. Type Column", value=cfg["trans_fields"]["type"], key=f"tr_type_{item['name']}_{s_name}")
+                        cfg["trans_fields"]["cond"] = c_tr2.text_input("Transf. Condition Column", value=cfg["trans_fields"]["cond"], key=f"tr_cond_{item['name']}_{s_name}")
+                        cfg["trans_fields"]["remarks"] = c_tr3.text_input("Remarks Column", value=cfg["trans_fields"]["remarks"], key=f"tr_remarks_{item['name']}_{s_name}")
+                        cfg["data_start_row"] = c_tr4.number_input("Data Row Start (1-based)", min_value=1, value=cfg.get("data_start_row", 1), key=f"dr_start_{item['name']}_{s_name}")
 
-    st.divider()
-    st.subheader("Project-Wide Instructions 🌐")
-    state.global_instructions = st.text_area("Global Instructions (e.g., standard null handling, date formats)", value=state.global_instructions, height=100)
+                        if st.button("Save & Preview", key=f"save_{item['name']}_{s_name}"):
+                            state.mapping_inventory[idx]["sheets"][s_name]["config"] = cfg
+                            state.mapping_inventory[idx]["sheets"][s_name]["sync_status"] = "Pending"
+                            state.save_project()
+                            # Perform individual sync
+                            try:
+                                MappingService.sync_sheet(state.current_project, item, s_name)
+                                state.mapping_inventory[idx]["sheets"][s_name]["sync_status"] = "Synced"
+                                state.save_project()
+                                st.success(f"Synced {s_name} to DB!")
+                            except Exception as e:
+                                st.error(f"Sync failed: {e}")
+                            st.rerun()
 
-    st.divider()
-    st.subheader("Select Execution Target 🎯")
-    
-    # Extract unique target tables from the mapping DF
-    target_tables = []
-    if t_tbl:
-        if t_tbl in state.mapping_df.columns:
-            target_tables = state.mapping_df[t_tbl].dropna().unique().tolist()
-        else:
-            idx = excel_col_to_idx(t_tbl)
-            if idx is not None and 0 <= idx < len(state.mapping_df.columns):
-                target_tables = state.mapping_df.iloc[:, idx].dropna().unique().tolist()
-    
-    target_tables = sorted(list(set([str(t).strip() for t in target_tables])))
-    state.selected_target_table = st.selectbox("Target Table to Process", options=target_tables, index=0 if state.selected_target_table in target_tables else 0 if target_tables else None)
+                        # Always try to fetch preview from DB if table exists (moved inside expander)
+                        try:
+                            tbl_name = ProjectManager.get_sanitized_table_name(f"mapping_{item['name']}_{s_name}")
+                            preview_df = ProjectManager.load_df_from_sql(state.current_project, tbl_name)
+                            if not preview_df.empty:
+                                st.write("##### Table Preview (DB)")
+                                st.dataframe(preview_df.head(5))
+                        except:
+                            pass
 
-    if st.button("🔍 Preview & Prepare Table", width='stretch'):
-        # Rebuild based on latest config
-        ProjectManager.rebuild_mapping_from_config(state.current_project, state.mapping_df, mapping_config_identifiers)
-        
-        st.session_state.show_mapping_preview = True
-        state.save_project()
-        st.rerun()
+    if st.button("🔄 Sync Mappings to Master", type="primary", use_container_width=True):
+        with st.spinner("Syncing to Master Mapping Table..."):
+            MappingService.sync_mappings(state.current_project, state.mapping_inventory)
+            st.success("Master Mapping table updated!")
+            st.rerun()
+
 else:
-    st.info("Please upload a mapping Excel file to begin.")
-    # Default variables to avoid NameErrors
-    s_subj = s_db = s_tbl = s_col = s_type = ""
-    t_subj = t_db = t_tbl = t_col = t_type = ""
-    tr_type = tr_cond = tr_remarks = ""
+    st.info("Please upload one or more Mapping Excel files to begin.")
 
+# Add the new selection tree here
+render_mapping_selection(state)
 
-if st.session_state.get("show_mapping_preview") and state.mapping_df is not None:
+# --- Phase 1: FSDM Discovery Execution ---
+if st.session_state.get("selected_mapping_rows") and len(state.selected_mapping_rows) > 0:
+    if st.button("🚀 Run FSDM Discovery on Selection"):
+        from agent.agents.fsdm_agent import create_fsdm_discovery_agent
+        from agent.agents.agents_utils import FSDMDiscoveryState
+        
+        st.markdown("### 🧠 Running FSDM Discovery...")
+        agent = create_fsdm_discovery_agent(
+            model_name=state.selected_model,
+            api_key=state.api_key,
+            base_url=state.base_url,
+            log_callback=lambda m: st.caption(m)
+        )
+        
+        df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
+        df['_unique_id'] = df.apply(lambda r: f"{r['_src_file']}|{r['_src_sheet']}|{r.name}", axis=1)
+        selected_df = df[df["_unique_id"].isin(state.selected_mapping_rows)]
+        
+        progress = st.progress(0)
+        for i, (_, row) in enumerate(selected_df.iterrows()):
+            st.write(f"Processing row {i+1}/{len(selected_df)}: `{row['source_column']}`...")
+            
+            test_state: FSDMDiscoveryState = {
+                "source_info": {"table_name": row['source_table'], "column_name": row['source_column']},
+                "target_info": {"table_name": row['target_table'], "column_name": row['target_column']},
+                "fsdm_instructions": "Analyze lineage.",
+                "fsdm_lineage_intent": "",
+                "fsdm_status": "",
+                "messages": [],
+                "project_name": state.current_project,
+                "feedback": None
+            }
+            
+            result = agent.invoke(test_state)
+            st.write(f"Result for {row['source_column']}:")
+            st.json(result)
+            progress.progress((i + 1) / len(selected_df))
+        st.success("Discovery Complete!")
+
+# FSDM Discovery Phase (Commented out until ready)
+# render_fsdm_discovery_ui(state)
+
+if st.session_state.get("show_mapping_preview"):
     st.divider()
     st.header(f"🔍 Table Scope: {state.selected_target_table}")
-    
+
     # Load the column-filtered mapping data from the DB for preview
     preview_base_df = ProjectManager.load_df_from_sql(state.current_project, "mapping_sheet")
     # Ensure it's a DataFrame if empty or failed to load
@@ -439,14 +471,13 @@ if st.session_state.get("show_mapping_preview") and state.mapping_df is not None
     st.info(f"Found {len(filtered_df)} rows for target table `{state.selected_target_table}`.")
     with st.expander("View Filtered Rows"):
         st.dataframe(filtered_df, width='stretch')
-    
+
     # Sync config
     state.mapping_config = {
-        "source": {"subj": s_subj, "db": s_db, "tbl": s_tbl, "col": s_col, "type": s_type},
-        "target": {"subj": t_subj, "db": t_db, "tbl": t_tbl, "col": t_col, "type": t_type},
-        "transformation": {"type": tr_type, "cond": tr_cond, "remarks": tr_remarks}
+        "source": {"subj": state.map_s_subj, "db": state.map_s_db, "tbl": state.map_s_tbl, "col": state.map_s_col, "type": state.map_s_type},
+        "target": {"subj": state.map_t_subj, "db": state.map_t_db, "tbl": state.map_t_tbl, "col": state.map_t_col, "type": state.map_t_type},
+        "transformation": {"type": state.map_trans_type, "cond": state.map_trans_cond, "remarks": state.map_remarks}
     }
-    
     # Pre-mapping Insight Phase
     st.subheader("Step 2.5: Pre-mapping Insights 🧠")
     st.markdown("Verify the 'Technical Intent' for each row before generating SQL.")

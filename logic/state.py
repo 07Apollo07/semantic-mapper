@@ -1,7 +1,7 @@
 import streamlit as st
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
-from .vector_store import VectorStoreManager
+from .vector_store import VectorStoreManager, VectorStoreService
 from .project_manager import ProjectManager
 import pandas as pd
 import os
@@ -14,15 +14,17 @@ class AppState:
     
     PERSISTENT_KEYS = [
         "current_project",
-        "step", "kb_inventory", "fsdm_inventory", "mapping_df", "mapping_config", 
-        "logs", "show_mapping_preview",
+        "step", "kb_inventory", "fsdm_inventory", "mapping_config", "mapping_inventory",
+        "logs",
         "base_url", "api_key", "selected_model", "available_models", "agent_mode",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
         "map_trans_type", "map_trans_cond", "map_remarks",
         "map_sheet_selector",
         "auto_scroll", "mapping_active",
-        "selected_target_table", "global_instructions", "preprocessing_active", "preprocessing_idx", "current_mapping_step"
+        "selected_target_table", "global_instructions", "preprocessing_active", "preprocessing_idx", "current_mapping_step",
+        "selected_mapping_rows",
+        "filter_files", "filter_sheets", "filter_tables"
     ]
 
     def __init__(self):
@@ -35,7 +37,6 @@ class AppState:
             "kb_inventory": [],
             "fsdm_inventory": [],
             "logs": [],
-            "show_mapping_preview": False,
             "base_url": "",
             "api_key": "",
             "selected_model": "gpt-4o",
@@ -50,7 +51,11 @@ class AppState:
             "global_instructions": "",
             "preprocessing_active": False,
             "preprocessing_idx": 0,
-            "current_mapping_step": "CONFIG"
+            "current_mapping_step": "CONFIG",
+            "selected_mapping_rows": [],
+            "filter_files": [],
+            "filter_sheets": [],
+            "filter_tables": []
         }
         for k, v in defaults.items():
             if k not in st.session_state:
@@ -75,8 +80,8 @@ class AppState:
         # Objects that don't serialize easily to storage
         if "v_manager" not in st.session_state:
             st.session_state.v_manager = VectorStoreManager()
-        if "mapping_df" not in st.session_state:
-            st.session_state.mapping_df = None
+        if "mapping_inventory" not in st.session_state:
+            st.session_state.mapping_inventory = {}
 
     def load_project(self, project_name: str):
         self.current_project = project_name
@@ -100,10 +105,6 @@ class AppState:
             if k in self.PERSISTENT_KEYS:
                 st.session_state[k] = v
 
-        # Load Mapping DF
-        df = ProjectManager.load_dataframe(project_name, "mapping.xlsx")
-        self.mapping_df = df
-        
         # Initialize Vector Store
         project_path = ProjectManager.get_project_path(project_name)
         vs_path = os.path.join(project_path, "vector_store")
@@ -117,10 +118,6 @@ class AppState:
 
         updates = {}
         for k in self.PERSISTENT_KEYS:
-            # Skip mapping_df in JSON (it's saved as a file)
-            if k == "mapping_df":
-                continue
-
             # Only update if the key is actually in session_state.
             # This prevents Streamlit's widget cleanup from deleting our persistent data
             # when switching between steps or rendering conditionally.
@@ -139,10 +136,6 @@ class AppState:
 
         if updates:
             ProjectManager.update_metadata(self.current_project, updates)
-
-        # Save Mapping DF separately
-        if self.mapping_df is not None:
-             ProjectManager.save_dataframe(self.current_project, "mapping.xlsx", self.mapping_df)
 
     def sync(self):
         """
@@ -232,13 +225,8 @@ class AppState:
         return st.session_state.v_manager
 
     @property
-    def mapping_df(self) -> Optional[pd.DataFrame]:
-        return st.session_state.mapping_df
-
-    @mapping_df.setter
-    def mapping_df(self, value: Optional[pd.DataFrame]):
-        st.session_state.mapping_df = value
-        self.save_project()
+    def v_service(self) -> VectorStoreService:
+        return VectorStoreService(self.v_manager)
 
     @property
     def results(self) -> List[Dict[str, Any]]:
@@ -249,6 +237,7 @@ class AppState:
         st.session_state["results"] = value
         self.save_project()
 
+    
     @property
     def mapping_active(self) -> bool:
         return st.session_state.get("mapping_active", False)
@@ -265,6 +254,16 @@ class AppState:
     def mapping_active(self, value: bool):
         st.session_state["mapping_active"] = value
         self.save_project()
+
+    @property
+    def mapping_inventory(self) -> List[Dict[str, Any]]:
+        return st.session_state.get("mapping_inventory", [])
+
+    @mapping_inventory.setter
+    def mapping_inventory(self, value: List[Dict[str, Any]]):
+        st.session_state["mapping_inventory"] = value
+        self.save_project()
+
 
     @property
     def mapping_idx(self) -> int:
@@ -321,6 +320,15 @@ class AppState:
         self.save_project()
 
     @property
+    def selected_mapping_rows(self) -> List[Dict[str, Any]]:
+        return st.session_state.get("selected_mapping_rows", [])
+
+    @selected_mapping_rows.setter
+    def selected_mapping_rows(self, value: List[Dict[str, Any]]):
+        st.session_state["selected_mapping_rows"] = value
+        self.save_project()
+
+    @property
     def auto_scroll(self) -> bool:
         return st.session_state.get("auto_scroll", True)
 
@@ -353,12 +361,11 @@ class AppState:
         st.session_state.v_manager = VectorStoreManager()
         self.results = []
         self.clear_logs()
-        self.mapping_df = None
-        st.session_state.show_mapping_preview = False
         self.selected_target_table = None
         self.global_instructions = ""
         self.preprocessing_active = False
         self.current_mapping_step = "CONFIG"
+        self.selected_mapping_rows = []
         # Clear storage keys for mapping
         for k in self.PERSISTENT_KEYS:
             if k.startswith("map_"):
@@ -371,3 +378,31 @@ class AppState:
             "api_key": st.session_state.get("api_key", ""),
             "model_name": st.session_state.get("selected_model", "")
         }
+
+    @property
+    def selected_model(self) -> str: return st.session_state.get("selected_model", "gpt-4o")
+    @property
+    def api_key(self) -> str: return st.session_state.get("api_key", "")
+    @property
+    def base_url(self) -> str: return st.session_state.get("base_url", "")
+
+    @property
+    def filter_files(self) -> List[str]: return st.session_state.get("filter_files", [])
+    @filter_files.setter
+    def filter_files(self, value: List[str]):
+        st.session_state["filter_files"] = value
+        self.save_project()
+
+    @property
+    def filter_sheets(self) -> List[str]: return st.session_state.get("filter_sheets", [])
+    @filter_sheets.setter
+    def filter_sheets(self, value: List[str]):
+        st.session_state["filter_sheets"] = value
+        self.save_project()
+
+    @property
+    def filter_tables(self) -> List[str]: return st.session_state.get("filter_tables", [])
+    @filter_tables.setter
+    def filter_tables(self, value: List[str]):
+        st.session_state["filter_tables"] = value
+        self.save_project()

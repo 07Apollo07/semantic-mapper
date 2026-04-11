@@ -1,7 +1,7 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from .agents_utils import FSDMDiscoveryState, FSDMIntentOutput
-from agent.tools import search_documentation, get_table_schema
+from ..agents.agents_utils import FSDMDiscoveryState, FSDMIntentOutput
+from agent.tools.tools import search_documentation, get_table_schema
 
 def create_fsdm_discovery_agent(model_name="gpt-4o", api_key=None, base_url=None, log_callback=None):
     llm = ChatOpenAI(

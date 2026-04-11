@@ -7,6 +7,7 @@ class FSDMDiscoveryState(TypedDict):
     source_info: Dict[str, Any]
     target_info: Dict[str, Any]
     fsdm_instructions: str
+    metadata: str  # Metadata for the specific FSDM table being analyzed
     fsdm_lineage_intent: str # Output
     fsdm_status: str # Output
     messages: List[BaseMessage]
@@ -14,8 +15,10 @@ class FSDMDiscoveryState(TypedDict):
     feedback: Optional[str]
 
 class FSDMIntentOutput(BaseModel):
-    lineage_intent: str = Field(description="Explanation of how the source column was derived from FSDM/ETL sources.")
-    status: str = Field(description="Status of discovery: e.g., 'Identified', 'Requires_Verification'")
+    lineage_intent: str = Field(description="Detailed explanation of the lineage chain (e.g., A -> B -> C).")
+    findings: str = Field(description="Brief summary of what was found.")
+    reasoning: str = Field(description="Step-by-step logic used to trace the lineage.")
+    recommended_sources: List[str] = Field(description="List of tables or columns identified as the right sources.")
 
 # Define State for the Mapping Agent
 class SemanticMappingState(TypedDict):
@@ -25,6 +28,7 @@ class SemanticMappingState(TypedDict):
     global_instructions: str
     mapping_instructions: str
     fsdm_lineage_intent: str # Input from Phase 1
+    vector_context: str # Context from Vector Store
     transformation_logic: str # Output
     reasoning: str # Output
     transformation_type: str # Output

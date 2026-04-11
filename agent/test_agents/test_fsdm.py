@@ -1,5 +1,5 @@
 import streamlit as st
-from agent.agents.fsdm_agent import create_fsdm_discovery_agent
+from agent.test_agents.fsdm_agent import create_fsdm_discovery_agent
 from agent.agents.agents_utils import FSDMDiscoveryState
 
 def render_fsdm_test(state):

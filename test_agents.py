@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from typing import Dict, Any
-from agent.executor import AgentExecutor
+from agent.agents.executor import AgentExecutor
 from logic.state import AppState
 from unittest.mock import MagicMock
 

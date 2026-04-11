@@ -105,7 +105,7 @@ def render_fsdm_discovery_ui(state: AppState):
     """
     Renders the FSDM Discovery UI for executing the first agentic phase.
     """
-    from agent.agents.test_fsdm import render_fsdm_test
+    from agent.test_agents.test_fsdm import render_fsdm_test
     st.divider()
     st.markdown("### 🧠 Phase 1: FSDM Discovery")
     render_fsdm_test(state)

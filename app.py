@@ -11,7 +11,9 @@ from logic.fsdm.service import FSDMService
 from logic.mapping.config import MappingConfig
 from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
-from agent import create_agent, AgentExecutor
+from agent.agents.executor import AgentExecutor
+from agent.agents.fsdm_metadata import generate_metadata
+from agent.tools.tools import sample_table_data_logic
 from ui import sidebar_config, display_logs, render_mapping_selection, render_fsdm_discovery_ui
 # from agent.agents.test_fsdm import render_fsdm_test
 
@@ -217,7 +219,7 @@ if fsdm_uploaded_files:
                 "name": f.name,
                 "type": "excel",
                 "bytes": file_bytes,
-                "sheets": {s: {"selected": True, "indexed": False} for s in sheets}
+                "sheets": {s: {"selected": True, "indexed": False, "metadata": ""} for s in sheets}
             })
     state.fsdm_inventory = fsdm_inventory # Trigger update
     state.save_project()
@@ -261,6 +263,34 @@ if state.fsdm_inventory:
                     if s_info["indexed"]:
                         s_col2.markdown(":green[In DB]")
                         s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_{item['name']}_{s_name}", disabled=True)
+                        
+                        # Metadata Management
+                        with st.expander("⚙️ Metadata"):
+                            # Read directly from state
+                            current_meta = state.fsdm_inventory[idx]["sheets"][s_name].get("metadata", "")
+                            if st.button("✨ Generate Metadata", key=f"gen_meta_{item['name']}_{s_name}"):
+                                with st.spinner("Analyzing data..."):
+                                    sample_df = sample_table_data_logic("fsdm_etl_" + s_name, state.current_project)
+                                    new_meta = generate_metadata(
+                                        sample_df, 
+                                        state.selected_model, 
+                                        state.api_key, 
+                                        state.base_url
+                                    )
+                                    state.fsdm_inventory[idx]["sheets"][s_name]["metadata"] = new_meta
+                                    state.save_project()
+                                    st.rerun()
+                                    
+                            new_val = st.text_area(
+                                "Table Definitions/Instructions", 
+                                value=current_meta, 
+                                key=f"meta_{item['name']}_{s_name}_{hash(current_meta)}"
+                            )
+                            if new_val != current_meta:
+                                state.fsdm_inventory[idx]["sheets"][s_name]["metadata"] = new_val
+                                state.save_project()
+                                st.rerun()
+                                
                     elif s_info["selected"]:
                         merge_check = s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_{item['name']}_{s_name}")
                         if merge_check != s_info.get("combine_headers", False):
@@ -404,219 +434,40 @@ else:
 # Add the new selection tree here
 render_mapping_selection(state)
 
-# --- Phase 1: FSDM Discovery Execution ---
-if st.session_state.get("selected_mapping_rows") and len(state.selected_mapping_rows) > 0:
-    if st.button("🚀 Run FSDM Discovery on Selection"):
-        from agent.agents.fsdm_agent import create_fsdm_discovery_agent
-        from agent.agents.agents_utils import FSDMDiscoveryState
-        
-        st.markdown("### 🧠 Running FSDM Discovery...")
-        agent = create_fsdm_discovery_agent(
-            model_name=state.selected_model,
-            api_key=state.api_key,
-            base_url=state.base_url,
-            log_callback=lambda m: st.caption(m)
-        )
-        
-        df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
-        df['_unique_id'] = df.apply(lambda r: f"{r['_src_file']}|{r['_src_sheet']}|{r.name}", axis=1)
-        selected_df = df[df["_unique_id"].isin(state.selected_mapping_rows)]
-        
-        progress = st.progress(0)
-        for i, (_, row) in enumerate(selected_df.iterrows()):
-            st.write(f"Processing row {i+1}/{len(selected_df)}: `{row['source_column']}`...")
-            
-            test_state: FSDMDiscoveryState = {
-                "source_info": {"table_name": row['source_table'], "column_name": row['source_column']},
-                "target_info": {"table_name": row['target_table'], "column_name": row['target_column']},
-                "fsdm_instructions": "Analyze lineage.",
-                "fsdm_lineage_intent": "",
-                "fsdm_status": "",
-                "messages": [],
-                "project_name": state.current_project,
-                "feedback": None
-            }
-            
-            result = agent.invoke(test_state)
-            st.write(f"Result for {row['source_column']}:")
-            st.json(result)
-            progress.progress((i + 1) / len(selected_df))
-        st.success("Discovery Complete!")
+st.divider()
+col_gen, col_stop = st.columns(2)
+with col_gen:
+    btn_label = f"🚀 Generate SQL Mappings ({len(state.selected_mapping_rows)} rows)" if len(state.selected_mapping_rows) > 0 else "🚀 Generate SQL Mappings"
+    if st.button(btn_label, type="primary", use_container_width=True, disabled=len(state.selected_mapping_rows) == 0 or state.mapping_active):
+        state.mapping_active = True
+        state.mapping_idx = 0 # We'll iterate through rows_to_process
+        state.save_project()
+        st.rerun()
+with col_stop:
+    if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, disabled=not state.mapping_active):
+        state.mapping_active = False
+        state.save_project()
+        st.rerun()
 
-# FSDM Discovery Phase (Commented out until ready)
-# render_fsdm_discovery_ui(state)
-
-if st.session_state.get("show_mapping_preview"):
-    st.divider()
-    st.header(f"🔍 Table Scope: {state.selected_target_table}")
-
-    # Load the column-filtered mapping data from the DB for preview
-    preview_base_df = ProjectManager.load_df_from_sql(state.current_project, "mapping_sheet")
-    # Ensure it's a DataFrame if empty or failed to load
-    if not isinstance(preview_base_df, pd.DataFrame):
-        preview_base_df = pd.DataFrame()
-
-    # Filter loaded DataFrame by selected target table
-    t_tbl_col = state.map_t_tbl
-    if t_tbl_col in preview_base_df.columns: # Check column existence in preview_base_df
-        filtered_df = preview_base_df[preview_base_df[t_tbl_col].astype(str).str.strip() == state.selected_target_table]
-    else:
-        idx = excel_col_to_idx(t_tbl_col)
-        # Check if idx is valid and preview_base_df has enough columns
-        if idx is not None and 0 <= idx < len(preview_base_df.columns):
-            filtered_df = preview_base_df[preview_base_df.iloc[:, idx].astype(str).str.strip() == state.selected_target_table]
-        else:
-            filtered_df = pd.DataFrame() # Handle cases where column is not found or df is too narrow
-
-    st.info(f"Found {len(filtered_df)} rows for target table `{state.selected_target_table}`.")
-    with st.expander("View Filtered Rows"):
-        st.dataframe(filtered_df, width='stretch')
-
-    # Sync config
-    state.mapping_config = {
-        "source": {"subj": state.map_s_subj, "db": state.map_s_db, "tbl": state.map_s_tbl, "col": state.map_s_col, "type": state.map_s_type},
-        "target": {"subj": state.map_t_subj, "db": state.map_t_db, "tbl": state.map_t_tbl, "col": state.map_t_col, "type": state.map_t_type},
-        "transformation": {"type": state.map_trans_type, "cond": state.map_trans_cond, "remarks": state.map_remarks}
-    }
-    # Pre-mapping Insight Phase
-    st.subheader("Step 2.5: Pre-mapping Insights 🧠")
-    st.markdown("Verify the 'Technical Intent' for each row before generating SQL.")
-    
-    executor = AgentExecutor(state)
-    
-    # Load existing mappings from DB
-    existing_mappings = {m['row_idx']: m for m in ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)}
-    
-    rows_to_process = []
-    for idx, row in filtered_df.iterrows():
-        row_idx = idx + 1
-        row_info = executor.extract_row_info(row, state.mapping_config)
-        row_info['row_idx'] = row_idx
-        row_info['target_table'] = state.selected_target_table
-        
-        # If not in DB, initialize it
-        if row_idx not in existing_mappings:
-            ProjectManager.save_mapping_row(state.current_project, row_info)
-            existing_mappings[row_idx] = row_info
-            
-        rows_to_process.append(existing_mappings[row_idx])
-
-    # --- Batch Intent Generation Controls ---
-    unverified_intents = [m for m in rows_to_process if m.get('validation_status') == 'Pending']
-    col_batch1, col_batch2 = st.columns(2)
-    with col_batch1:
-        batch_label = f"🤖 Generate Intent for All Rows ({len(unverified_intents)} unverified)"
-        if st.button(batch_label, type="primary", use_container_width=True, disabled=len(unverified_intents) == 0 or state.preprocessing_active):
-            state.preprocessing_active = True
-            state.preprocessing_idx = 0
-            state.save_project()
-            st.rerun()
-    with col_batch2:
-        if st.button("🛑 Stop Intent Generation", type="secondary", use_container_width=True, disabled=not state.preprocessing_active):
-            state.preprocessing_active = False
-            state.preprocessing_idx = 0
-            state.save_project()
-            st.rerun()
-    
-    if state.preprocessing_active:
-        total_rows = len(rows_to_process)
-        completed_intents = len([m for m in rows_to_process if m.get('pre_mapping_insight')])
-        st.progress(completed_intents / total_rows if total_rows > 0 else 0)
-        st.info(f"Generating intents: {completed_intents}/{total_rows} completed...")
-    
-    st.divider()
-
-    # Display Preprocessing UI
-    for m in rows_to_process:
-        row_idx = m['row_idx']
-        with st.container(border=True):
-            c1, c2 = st.columns([1, 4])
-            c1.markdown(f"**Row #{row_idx}**")
-            
-            # Status Indicator
-            v_status = m.get('validation_status', 'Pending')
-            if v_status == 'Pending':
-                c1.caption("🟡 Pending Intent")
-            elif v_status == 'Intent Verified':
-                c1.caption("🟢 Intent Verified")
-            elif v_status == 'Mapping Complete':
-                c1.caption("🔵 Mapped")
-            elif v_status == 'SQL Verified':
-                c1.caption("🔒 SQL Verified")
-                
-            c1.caption(f"`{m['source_info']['column_name']}` → `{m['target_info']['column_name']}`")
-            
-            # Insight Area
-            insight = m.get('pre_mapping_insight', '')
-            if not insight:
-                if c2.button("🧠 Generate Intent", key=f"gen_ins_{row_idx}"):
-                    insight = executor.generate_insight(m)
-                    ProjectManager.update_mapping_validation(state.current_project, row_idx, {"pre_mapping_insight": insight})
-                    st.session_state[f"ins_val_{row_idx}"] = insight
-                    st.rerun()
-            
-            if insight:
-                # Use session state to store the value for the text area to allow programmatic updates
-                if f"ins_val_{row_idx}" not in st.session_state:
-                    st.session_state[f"ins_val_{row_idx}"] = insight
-
-                # Move Toggle up to control disabling of other widgets
-                current_status = m.get('validation_status', 'Pending')
-                is_verified_init = (current_status in ['Intent Verified', 'Mapping Complete', 'SQL Verified'])
-                
-                col_v1, col_v2 = c2.columns([1, 1])
-                is_verified = col_v1.toggle("Verify Intent", value=is_verified_init, key=f"v_tog_{row_idx}")
-                
-                # Update status if toggled
-                if is_verified != is_verified_init:
-                    new_status = "Intent Verified" if is_verified else "Pending"
-                    ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": new_status})
-                    st.rerun()
-                
-                new_insight = c2.text_area("Technical Intent / Hypothesis", value=st.session_state[f"ins_val_{row_idx}"], key=f"ins_val_ta_{row_idx}", height=100, disabled=is_verified)
-                if not is_verified and new_insight != st.session_state[f"ins_val_{row_idx}"]:
-                    st.session_state[f"ins_val_{row_idx}"] = new_insight
-                    ProjectManager.update_mapping_validation(state.current_project, row_idx, {"pre_mapping_insight": new_insight, "validation_status": "Pending"})
-                
-                # Feedback & Regeneration
-                with c2.expander("Regenerate with Hints"):
-                    hint = st.text_area("Hints/Feedback for intent", placeholder="e.g. Use JOIN instead of union, filter for active status...", key=f"hint_{row_idx}", disabled=is_verified)
-                    
-                    def regen_callback(ridx, rdata, h):
-                        # This runs BEFORE the main script rendering
-                        new_insight_gen = executor.generate_insight(rdata, feedback=h)
-                        ProjectManager.update_mapping_validation(state.current_project, ridx, {"pre_mapping_insight": new_insight_gen, "validation_status": "Pending"})
-                        st.session_state[f"ins_val_{ridx}"] = new_insight_gen
-                        # This is now safe because the widget hasn't been instantiated in this run yet
-                        st.session_state[f"ins_val_ta_{ridx}"] = new_insight_gen
-
-                    st.button("🔄 Regenerate Intent", key=f"reg_ins_{row_idx}", on_click=regen_callback, args=(row_idx, m, hint), disabled=is_verified)
-
-    # --- Mapping Execution Controls ---
-    num_ready = len([m for m in rows_to_process if m.get('validation_status') == 'Intent Verified'])
-    st.divider()
-    col_gen, col_stop = st.columns(2)
-    with col_gen:
-        btn_label = f"🚀 Generate SQL Mappings ({num_ready} rows)" if num_ready > 0 else "🚀 Generate SQL Mappings"
-        if st.button(btn_label, type="primary", use_container_width=True, disabled=num_ready == 0 or state.mapping_active):
-            state.mapping_active = True
-            state.mapping_idx = 0 # We'll iterate through rows_to_process
-            state.save_project()
-            st.rerun()
-    with col_stop:
-        if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, disabled=not state.mapping_active):
-            state.mapping_active = False
-            state.save_project()
-            st.rerun()
-
-    st.divider()
+st.divider()
 
 
 # Section 3: Results
 st.header("3. Transformation Results")
 
-# Pull results from DB for current table
-if state.selected_target_table:
+# Pull results from DB
+available_tables = ProjectManager.get_unique_target_tables(state.current_project)
+if available_tables:
+    # Use a selectbox to pick which table to view results for
+    selected_view_table = st.selectbox(
+        "Select Target Table to view results", 
+        available_tables, 
+        index=available_tables.index(state.selected_target_table) if state.selected_target_table in available_tables else 0
+    )
+    if selected_view_table != state.selected_target_table:
+        state.selected_target_table = selected_view_table
+        st.rerun()
+
     db_results = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
     # Only show those with logic generated
     completed_results = [r for r in db_results if r.get('transformation_logic')]
@@ -636,7 +487,7 @@ else:
             with col_l:
                 st.markdown(f"**Row #{row_idx}**")
                 st.caption(f"`{res['transformation_type']}`")
-                
+            
                 # Visual check for verified SQL
                 if res.get('validation_status') == 'SQL Verified':
                     st.success("Verified")
@@ -645,7 +496,7 @@ else:
 
             with col_r:
                 st.code(res['transformation_logic'], language="sql")
-            
+        
             # Compact Metadata
             s = res['source_info']
             t = res['target_info']
@@ -653,13 +504,13 @@ else:
 
             # Details Expander
             with st.expander("Details, Reasoning & Feedback"):
-                st.markdown(f"**Intent:** {res.get('pre_mapping_insight')}")
+                st.markdown(f"**Intent:** {res.get('pre_mapping_insight', 'N/A')}")
                 st.markdown(f"**Reasoning:** {res['reasoning']}")
-                
+            
                 # SQL Verification Toggle
                 current_v_status = res.get('validation_status', 'Mapping Complete')
                 sql_is_verified = st.toggle("Verify SQL (Golden Example)", value=(current_v_status == 'SQL Verified'), key=f"sql_v_{row_idx}")
-                
+            
                 if sql_is_verified and current_v_status != 'SQL Verified':
                     ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": "SQL Verified"})
                     st.rerun()
@@ -668,22 +519,20 @@ else:
                     st.rerun()
 
                 feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}", disabled=sql_is_verified)
-                
+            
                 def on_regen_row(idx, feed, row_data):
                     state.sync()
-                    with st.spinner(f"Regenerating..."):
+                    with st.spinner(f"Regenerating row {idx}..."):
                         executor = AgentExecutor(state)
                         new_res = executor.process_row(row_data, idx, feedback=feed)
-                        # Save back to DB
-                        ProjectManager.save_mapping_row(state.current_project, {**row_data, **new_res, "validation_status": "Mapping Complete"})
-                
+                        ProjectManager.save_mapping_row(state.current_project, new_res)
+            
                 if st.button("🔄 Regenerate SQL", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback, res), disabled=sql_is_verified):
                     st.rerun()
 
     # Export all tables from DB
     if st.button("📦 Export All Processed Tables to Excel", width='stretch'):
         all_db_data = []
-        # We'll get all unique tables and export them
         unique_tables = ProjectManager.get_unique_target_tables(state.current_project)
         for tbl in unique_tables:
             tbl_mappings = ProjectManager.get_mappings_by_table(state.current_project, tbl)
@@ -694,27 +543,27 @@ else:
                     all_db_data.append({
                         "Target Table": m['target_table'],
                         "Row": m['row_idx'],
-                        "Source Subject Area": s['subject_area'],
-                        "Source DB Name": s['db_name'],
-                        "Source Table Name": s['table_name'],
-                        "Source Column Name": s['column_name'],
-                        "Source Datatype": s['datatype'],
-                        "Target Subject Area": t['subject_area'],
-                        "Target DB Name": t['db_name'],
-                        "Target Table Name": t['table_name'],
-                        "Target Column Name": t['column_name'],
-                        "Target Datatype": t['datatype'],
+                        "Source Subject Area": s.get('subject_area'),
+                        "Source DB Name": s.get('db_name'),
+                        "Source Table Name": s.get('table_name'),
+                        "Source Column Name": s.get('column_name'),
+                        "Source Datatype": s.get('datatype'),
+                        "Target Subject Area": t.get('subject_area'),
+                        "Target DB Name": t.get('db_name'),
+                        "Target Table Name": t.get('table_name'),
+                        "Target Column Name": t.get('column_name'),
+                        "Target Datatype": t.get('datatype'),
                         "Transformation Type": m['transformation_type'],
                         "Transformation Logic": m['transformation_logic'],
                         "Reasoning": m['reasoning']
                     })
-        
+    
         if all_db_data:
             final_df = pd.DataFrame(all_db_data)
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 final_df.to_excel(writer, index=False, sheet_name='Semantic Mappings')
-            
+        
             st.download_button(
                 label="Download Final Mappings (Excel) 📥",
                 data=buffer.getvalue(),
@@ -732,86 +581,89 @@ st.divider()
 st.header("4. Application Logs 📑"  )
 display_logs(state, height=400, key_prefix="main_logs")
 
-# --- Preprocessing Loop (Batch Intent Generation) ---
-if state.preprocessing_active:
-    # If already processing, show status and stop to avoid re-triggering
-    if st.session_state.get("processing_intent", False):
-        st.info("Generating intent...")
-        st.stop()
-
-    # Get ALL rows for the table
-    db_rows = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
-    
-    if state.preprocessing_idx < len(db_rows):
-        m = db_rows[state.preprocessing_idx]
-        
-        # Only process if status is Pending (unverified)
-        if m.get('validation_status') == 'Pending':
-            st.session_state["processing_intent"] = True
-            executor = AgentExecutor(state)
-            row_idx = m['row_idx']
-            
-            # Generate insight
-            insight = executor.generate_insight(m)
-            ProjectManager.update_mapping_validation(state.current_project, row_idx, {"pre_mapping_insight": insight})
-            st.session_state[f"ins_val_{row_idx}"] = insight
-            st.session_state["processing_intent"] = False
-
-        # Increment index and rerun
-        state.preprocessing_idx += 1
-        st.rerun()
-    else:
-        # Completion Check
-        state.preprocessing_active = False
-        state.preprocessing_idx = 0
-        state.save_project()
-        st.rerun()
-
-
-# --- Mapping Execution Loop (State Machine) ---
+# # --- Mapping Execution Loop (State Machine) ---
 if state.mapping_active:
     # Stop Button
     if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, key="stop_mapping_bottom"):
         state.mapping_active = False
         state.save_project()
-        st.session_state["processing_row"] = False
+        st.session_state["mapping_idx"] = 0
         st.rerun()
 
-    # If already processing, show status and stop to avoid re-triggering
-    if st.session_state.get("processing_row", False):
-        st.info("Mapping in progress...")
-        st.stop()
-
-    # Get rows that are intent-verified but not yet mapped
-    db_rows = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
-    pending_rows = [r for r in db_rows if r.get('validation_status') == 'Intent Verified']
+    # Track progress index
+    if "mapping_idx" not in st.session_state:
+        st.session_state["mapping_idx"] = 0
     
-    if pending_rows:
-        st.session_state["processing_row"] = True
+    selected_ids = state.selected_mapping_rows
+    total_rows = len(selected_ids)
+
+    if total_rows == 0:
+        st.warning("No rows selected.")
+        state.mapping_active = False
+        st.rerun()
+
+    if st.session_state["mapping_idx"] < total_rows:
+        unique_id = selected_ids[st.session_state["mapping_idx"]]
         
-        executor = AgentExecutor(state)
-        # Process the first pending row
-        m = pending_rows[0]
-        row_idx = m['row_idx']
+        # Display progress
+        st.progress((st.session_state["mapping_idx"]) / total_rows)
+        st.info(f"Processing ({st.session_state['mapping_idx'] + 1}/{total_rows}): {unique_id}")
         
-        # Progress bar
-        total_in_table = len(db_rows)
-        processed_count = len([r for r in db_rows if r.get('validation_status') in ['Mapping Complete', 'SQL Verified']])
-        st.progress((processed_count + 1) / total_in_table)
+        # Fetch actual row data from unified_mapping_view
+        unified_df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
+        if not unified_df.empty:
+            try:
+                parts = unique_id.split("|")
+                if len(parts) == 3:
+                    f_name, s_name, r_idx_str = parts
+                    r_idx = int(r_idx_str)
+                    
+                    row_data_raw = unified_df.loc[r_idx]
+                    
+                    target_table = row_data_raw.get('target_table', 'unknown_table')
+                    target_col = row_data_raw.get('target_column', 'unknown_col')
+                    source_table = row_data_raw.get('source_table', 'unknown_table')
+                    source_col = row_data_raw.get('source_column', 'unknown_col')
+                    
+                    row_data = {
+                        "source_info": {
+                            "subject_area": row_data_raw.get("source_subject"),
+                            "db_name": row_data_raw.get("source_db"),
+                            "table_name": source_table,
+                            "column_name": source_col,
+                            "datatype": row_data_raw.get("source_type")
+                        },
+                        "target_info": {
+                            "subject_area": row_data_raw.get("target_subject"),
+                            "db_name": row_data_raw.get("target_db"),
+                            "table_name": target_table,
+                            "column_name": target_col,
+                            "datatype": row_data_raw.get("target_type")
+                        },
+                        "transformation_specs": {
+                            "type": row_data_raw.get("trans_type"),
+                            "condition": row_data_raw.get("trans_condition"),
+                            "remarks": row_data_raw.get("remarks")
+                        },
+                        "target_table": target_table
+                    }
+                    
+                    executor = AgentExecutor(state)
+                    res = executor.process_row(row_data, r_idx)
+                    ProjectManager.save_mapping_row(state.current_project, res)
+                    st.write(f"✅ Saved result for {unique_id}")
+                else:
+                    st.error(f"Invalid unique_id format: {unique_id}")
+            except Exception as e:
+                st.error(f"Error processing row {unique_id}: {e}")
         
-        # Process row
-        result = executor.process_row(m, row_idx)
-        
-        # Update state in DB
-        ProjectManager.save_mapping_row(state.current_project, {**m, **result, "validation_status": "Mapping Complete"})
-        
-        # Reset flag
-        st.session_state["processing_row"] = False
+        st.session_state["mapping_idx"] += 1
         st.rerun()
     else:
-        # Completion Check
+        # Completion
+        st.success("Mapping complete!")
         state.mapping_active = False
+        st.session_state["mapping_idx"] = 0
         state.save_project()
-        st.success("Table mapping complete!")
         st.rerun()
 

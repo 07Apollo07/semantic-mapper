@@ -328,11 +328,36 @@ if state.fsdm_inventory:
 
 st.divider()
 
-#  Section 2: Mapping Configuration
+# Section 2: Mapping Configuration
 st.header("2. Configure Mapping Documents")
+
+# --- Instructions Management ---
+st.subheader("⚙️ System Instructions")
+col_g, col_f, col_m = st.columns([2, 1, 1])
+
+# Fetch current instructions
+current_global = ProjectManager.get_instructions(state.current_project, 'global')
+current_fsdm = ProjectManager.get_instructions(state.current_project, 'fsdm')
+current_mapping = ProjectManager.get_instructions(state.current_project, 'mapping')
+
+with st.container():
+    global_instr = st.text_area("Global Instructions (Style, Tone, Standards)", value=current_global, height=100)
+
+    col_f1, col_m1 = st.columns(2)
+    with col_f1:
+        fsdm_instr = st.text_area("FSDM Discovery Instructions", value=current_fsdm, height=100)
+    with col_m1:
+        mapping_instr = st.text_area("Mapping Generation Instructions", value=current_mapping, height=100)
+
+    if st.button("💾 Save All Instructions"):
+        ProjectManager.save_instructions(state.current_project, 'global', global_instr)
+        ProjectManager.save_instructions(state.current_project, 'fsdm', fsdm_instr)
+        ProjectManager.save_instructions(state.current_project, 'mapping', mapping_instr)
+        st.success("Instructions saved to database!")
 
 # --- 1. Multi-File Uploader ---
 mapping_files = st.file_uploader("Upload Mapping Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="map_uploader")
+
 
 if mapping_files:
     inventory = state.mapping_inventory or []

@@ -74,7 +74,7 @@ class AgentExecutor:
         source_info = row_data.get('source_info', {})
         source_table = source_info.get('table_name')
         
-        # 1. Phase 1: FSDM Discovery (Detective)
+        # 1. Phase 1: FSDM Lineage Discovery (Detective)
         self._log(f"🕵️ [Detective] Tracing lineage for Row {row_idx} ({source_table})...")
         
         metadata = self._get_table_metadata(source_table)
@@ -82,13 +82,16 @@ class AgentExecutor:
         fsdm_inputs = {
             "source_info": source_info,
             "target_info": row_data.get('target_info', {}),
-            "fsdm_instructions": "", # Will be fetched by tool in detective node
+            "fsdm_instructions": "", 
             "metadata": metadata,
             "project_name": self.state.current_project,
             "messages": [HumanMessage(content=f"Trace lineage for {source_info.get('column_name')} in {source_table}.")]
         }
         if feedback:
             fsdm_inputs["feedback"] = feedback
+
+        lineage_intent = "No lineage context provided."
+        lineage_status = "Failed"
 
         try:
             fsdm_res = self.fsdm_detective.invoke(fsdm_inputs)
@@ -99,13 +102,12 @@ class AgentExecutor:
                 intent_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'FSDMIntentOutput'), None)
                 if intent_call:
                     lineage_intent = intent_call['args'].get('lineage_intent', "No intent generated.")
+                    lineage_status = "Success"
                     self._log(f"✅ [Detective] Lineage traced.")
                 else:
-                    lineage_intent = "Detective finished without calling output tool."
                     self._log(f"⚠️ [Detective] No structured output.")
             else:
-                lineage_intent = "Detective failed to provide AIMessage with tool calls."
-                self._log(f"❌ [Detective] Failed.")
+                self._log(f"❌ [Detective] Failed to provide AIMessage with tool calls.")
         except Exception as e:
             self._log(f"❌ [Detective] Error: {str(e)}")
             lineage_intent = f"Error during discovery: {str(e)}"
@@ -117,12 +119,21 @@ class AgentExecutor:
             "source_info": source_info,
             "target_info": row_data.get('target_info', {}),
             "transformation_specs": row_data.get('transformation_specs', {}),
-            "global_instructions": "", # Fetched by tool
-            "mapping_instructions": "", # Fetched by tool
             "fsdm_lineage_intent": lineage_intent,
             "project_name": self.state.current_project,
             "messages": [HumanMessage(content="Generate the SQL mapping based on the provided lineage intent.")],
             "feedback": feedback
+        }
+
+        mapping_res = {
+            "row_idx": row_idx,
+            "target_table": row_data.get('target_info', {}).get('table_name'),
+            "source_info": source_info,
+            "target_info": row_data.get('target_info', {}),
+            "transformation_specs": row_data.get('transformation_specs', {}),
+            "fsdm_intent": lineage_intent,
+            "fsdm_status": lineage_status,
+            "mapping_status": "Pending"
         }
 
         try:
@@ -132,31 +143,19 @@ class AgentExecutor:
                 output_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'MappingOutput'), None)
                 if output_call:
                     args = output_call['args']
-                    self._log(f"✅ [Engineer] SQL Generated.")
-                    return {
-                        "row_idx": row_idx,
-                        "source_info": source_info,
-                        "target_info": row_data.get('target_info', {}),
-                        "transformation_specs": row_data.get('transformation_specs', {}),
-                        "pre_mapping_insight": lineage_intent,
+                    mapping_res.update({
+                        "mapping_status": "Complete",
                         "transformation_type": args.get('transformation_type'),
                         "transformation_logic": args.get('transformation_logic'),
-                        "reasoning": args.get('reasoning'),
-                        "validation_status": "Mapping Complete"
-                    }
+                        "reasoning": args.get('reasoning')
+                    })
+                    self._log(f"✅ [Engineer] SQL Generated.")
+                    return mapping_res
             
             self._log(f"❌ [Engineer] No structured output.")
-            return {
-                "row_idx": row_idx,
-                "transformation_type": "ERROR",
-                "transformation_logic": "Engineer failed to call output tool.",
-                "reasoning": lineage_intent
-            }
+            mapping_res["mapping_status"] = "Error: Failed to call MappingOutput."
+            return mapping_res
         except Exception as e:
             self._log(f"❌ [Engineer] Error: {str(e)}")
-            return {
-                "row_idx": row_idx,
-                "transformation_type": "ERROR",
-                "transformation_logic": f"Error during engineering: {str(e)}",
-                "reasoning": lineage_intent
-            }
+            mapping_res["mapping_status"] = f"Error: {str(e)}"
+            return mapping_res

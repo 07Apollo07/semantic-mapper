@@ -22,6 +22,19 @@ def list_project_tables_logic(project_name: str) -> str:
     except Exception as e:
         return f"Error listing tables: {str(e)}"
 
+def list_fsdm_tables_logic(project_name: str) -> str:
+    """
+    Lists available tables in the project's SQLite database that start with 'fsdm_etl_'.
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    try:
+        all_tables = db.get_usable_table_names()
+        fsdm_tables = [t for t in all_tables if t.lower().startswith("fsdm_etl_")]
+        return f"Available FSDM tables: {', '.join(fsdm_tables)}"
+    except Exception as e:
+        return f"Error listing FSDM tables: {str(e)}"
+
 def fetch_vector_context_logic(query: str, project_name: str) -> str:
     """
     Performs a semantic search on the project's knowledge base (PDFs, documents).
@@ -157,6 +170,14 @@ def lg_list_project_tables(project_name: str) -> str:
     return res
 
 @tool
+def lg_list_fsdm_tables_logic(project_name: str) -> str:
+    """Lists available tables in the project's SQLite database that start with 'fsdm_etl_'."""
+    print(f"[Tool: List FSDM Tables] Project: {project_name}")
+    res = list_fsdm_tables_logic(project_name)
+    print(f"[Tool: List FSDM Tables] Result: {res}")
+    return res
+
+@tool
 def lg_fetch_vector_context(query: str, project_name: str) -> str:
     """Performs a semantic search on the project's knowledge base."""
     print(f"[Tool: Vector Search] Query: {query}, Project: {project_name}")
@@ -169,7 +190,7 @@ def lg_query_db(sql_query: str, project_name: str) -> str:
     """Executes a SELECT SQL query against the database."""
     print(f"[Tool: SQL Query] Query: {sql_query}, Project: {project_name}")
     res = query_db_logic(sql_query, project_name)
-    print(f"[Tool: SQL Query] Result: {res[:200]}...")
+    print(f"[Tool: SQL Query] Result: {res}...")
     return res
 
 @tool
@@ -185,7 +206,7 @@ def lg_sample_table_data(table_name: str, project_name: str, n: int = 5) -> str:
     """Returns the first N rows of a table."""
     print(f"[Tool: Sample Data] Table: {table_name}, N: {n}, Project: {project_name}")
     res = sample_table_data_logic(table_name, project_name, n)
-    print(f"[Tool: Sample Data] Result: {res[:200]}...")
+    print(f"[Tool: Sample Data] Result: {res}...")
     return res
 
 @tool
@@ -193,7 +214,7 @@ def lg_get_mapping_summary(tables: List[str], project_name: str) -> str:
     """Summarizes mapping logic for the provided tables."""
     print(f"[Tool: Mapping Summary] Tables: {tables}, Project: {project_name}")
     res = get_mapping_summary_logic(project_name, tables)
-    print(f"[Tool: Mapping Summary] Returning result snippet: {res[:200]}...")
+    print(f"[Tool: Mapping Summary] Returning result snippet: {res}...")
     return res
 
 @tool
@@ -201,7 +222,7 @@ def lg_get_fsdm_summary(tables: List[str], project_name: str) -> str:
     """Summarizes FSDM logic for the provided tables."""
     print(f"[Tool: FSDM Summary] Tables: {tables}, Project: {project_name}")
     res = get_fsdm_summary_logic(project_name, tables)
-    print(f"[Tool: FSDM Summary] Returning result snippet: {res[:200]}...")
+    print(f"[Tool: FSDM Summary] Returning result snippet: {res}...")
     return res
 
 @tool

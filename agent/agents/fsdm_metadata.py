@@ -20,6 +20,8 @@ def generate_metadata(sample_df, model_name, api_key, base_url):
     
     prompt = ChatPromptTemplate.from_template(
         "Analyze the following sample data from a database table:\n\n{sample_data}\n\n"
+        "This is just a subset of sample data, your job is not to infer from the data."
+        "Do not give information about data, just column information. "
         "Provide a concise text description of the table's purpose and define the role of its columns. "
         "This description will be used as instructions for an AI agent performing data mapping. "
         "Focus on clarity and technical accuracy."

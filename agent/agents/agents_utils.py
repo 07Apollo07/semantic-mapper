@@ -1,5 +1,6 @@
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Annotated
 from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 # Define State for the FSDM Discovery Agent
@@ -10,7 +11,7 @@ class FSDMDiscoveryState(TypedDict):
     metadata: str  # Metadata for the specific FSDM table being analyzed
     fsdm_lineage_intent: str # Output
     fsdm_status: str # Output
-    messages: List[BaseMessage]
+    messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
 
@@ -32,7 +33,7 @@ class SemanticMappingState(TypedDict):
     transformation_logic: str # Output
     reasoning: str # Output
     transformation_type: str # Output
-    messages: List[BaseMessage]
+    messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
 

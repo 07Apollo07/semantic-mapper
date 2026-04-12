@@ -123,7 +123,7 @@ class ProjectManager:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Create final_mappings table
+        # Create final_mappings table with updated schema
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS final_mappings (
                 row_idx INTEGER PRIMARY KEY,
@@ -131,9 +131,9 @@ class ProjectManager:
                 source_info TEXT,
                 target_info TEXT,
                 transformation_specs TEXT,
-                pre_mapping_insight TEXT,
-                human_correction TEXT,
-                validation_status TEXT,
+                fsdm_intent TEXT,
+                fsdm_status TEXT,
+                mapping_status TEXT,
                 transformation_type TEXT,
                 transformation_logic TEXT,
                 reasoning TEXT
@@ -186,11 +186,11 @@ class ProjectManager:
         
         target_table = str(row_data.get('target_table', '')).strip()
         
-        # We use INSERT OR REPLACE to handle updates
+        # Updated query to include new fields
         cursor.execute("""
             INSERT OR REPLACE INTO final_mappings (
                 row_idx, target_table, source_info, target_info, transformation_specs,
-                pre_mapping_insight, human_correction, validation_status,
+                fsdm_intent, fsdm_status, mapping_status,
                 transformation_type, transformation_logic, reasoning
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -199,9 +199,9 @@ class ProjectManager:
             json.dumps(row_data.get('source_info')),
             json.dumps(row_data.get('target_info')),
             json.dumps(row_data.get('transformation_specs')),
-            row_data.get('pre_mapping_insight'),
-            row_data.get('human_correction'),
-            row_data.get('validation_status', 'Pending'),
+            row_data.get('fsdm_intent'),
+            row_data.get('fsdm_status'),
+            row_data.get('mapping_status', 'Pending'),
             row_data.get('transformation_type'),
             row_data.get('transformation_logic'),
             row_data.get('reasoning')

@@ -528,9 +528,23 @@ else:
             st.caption(f"**Src:** `{s.get('db_name')}.{s.get('table_name')}.{s.get('column_name')}` | **Tgt:** `{t.get('db_name')}.{t.get('table_name')}.{t.get('column_name')}`")
 
             # Details Expander
-            with st.expander("Details, Reasoning & Feedback"):
-                st.markdown(f"**Intent:** {res.get('pre_mapping_insight', 'N/A')}")
-                st.markdown(f"**Reasoning:** {res['reasoning']}")
+            with st.expander("Details, Reasoning & Feedback", expanded=False):
+                # 1. FSDM Discovery Intelligence (Phase 1)
+                st.markdown("#### 🧠 Phase 1: FSDM Discovery Intelligence")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown(f"**Findings:**\n{res.get('fsdm_findings', 'N/A')}")
+                with c2:
+                    st.markdown(f"**Recommended Sources:**\n`{res.get('fsdm_recommended_sources', 'N/A')}`")
+                
+                st.markdown(f"**Discovery Reasoning:**\n{res.get('fsdm_reasoning', 'N/A')}")
+                st.markdown(f"**Discovery Report (Full):**\n{res.get('fsdm_intent', 'N/A')}")
+                
+                st.divider()
+
+                # 2. SQL Engineering (Phase 2)
+                st.markdown("#### ⚙️ Phase 2: SQL Engineering")
+                st.markdown(f"**Mapping Reasoning:**\n{res.get('reasoning', 'N/A')}")
             
                 # SQL Verification Toggle
                 current_v_status = res.get('validation_status', 'Mapping Complete')
@@ -580,7 +594,11 @@ else:
                         "Target Datatype": t.get('datatype'),
                         "Transformation Type": m['transformation_type'],
                         "Transformation Logic": m['transformation_logic'],
-                        "Reasoning": m['reasoning']
+                        "SQL Reasoning": m['reasoning'],
+                        "FSDM Findings": m.get('fsdm_findings'),
+                        "FSDM Reasoning": m.get('fsdm_reasoning'),
+                        "FSDM Recommended Sources": m.get('fsdm_recommended_sources'),
+                        "FSDM Full Intent": m.get('fsdm_intent')
                     })
     
         if all_db_data:

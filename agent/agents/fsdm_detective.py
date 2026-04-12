@@ -14,9 +14,11 @@ from agent.tools.tools import (
 def should_continue(state: FSDMDiscoveryState):
     last_message = state['messages'][-1]
     if last_message.tool_calls:
-        print(f"[Detective Debug] Tool calls detected: {[tc['name'] for tc in last_message.tool_calls]}")
+        print(f"[Detective Tool Called]: {[tc['name'] for tc in last_message.tool_calls]}")
         for tc in last_message.tool_calls:
             if tc['name'] == 'FSDMIntentOutput':
+                print(f"\n--- [Detective Node: Turn Input] ---")
+                state['messages'][-1].pretty_print()
                 print(f"[Detective Debug] FSDMIntentOutput called. Ending.")
                 return "end"
         return "tools"
@@ -45,34 +47,47 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
         target_col = source_info.get('column_name')
         feedback = state.get('feedback')
 
-        print(f"[Detective Debug] Current History: {state['messages']}")
-        print(f"[Detective Debug] Processing {target_table}.{target_col} for project {project}")
+        # Use cached prompt if available, otherwise generate, cache, and PRINT it
+        if 'system_prompt' not in state:
+            # 1. Fetch instructional context
+            global_instr = lg_get_instructions.invoke({"scope": "global", "project_name": project})
+            fsdm_instr = lg_get_instructions.invoke({"scope": "fsdm", "project_name": project})
 
-        # 1. Fetch instructional context
-        global_instr = lg_get_instructions.invoke({"scope": "global", "project_name": project})
-        fsdm_instr = lg_get_instructions.invoke({"scope": "fsdm", "project_name": project})
+            # 2. Get list of available mapping tables
+            mapping_tables = lg_list_fsdm_tables_logic.invoke({"project_name": project})
 
-        # 2. Get list of available mapping tables
-        mapping_tables = lg_list_fsdm_tables_logic.invoke({"project_name": project})
+            feedback_section = f"\n<human_feedback>\n{feedback}\n</human_feedback>\n" if feedback else ""
 
-        feedback_section = f"\n<human_feedback>\n{feedback}\n</human_feedback>\n" if feedback else ""
-
-        system_prompt = f"""### Role
-    You are an expert **FSDM Lineage Detective**. Your task is to trace the lineage of a target column from a target table to its source column in an ETL process.
+            state['system_prompt'] = f"""### Role
+    You are an expert **FSDM Source Discovery Agent**. Your mission is to investigate and identify all required source columns, tables, and business logic needed to fulfill a mapping request. 
+    **CRITICAL:** You are NOT the final mapping agent. Your output will be consumed by a **Mapping Engineer** who will generate the final SQL. Your job is to provide that engineer with a complete, indisputable "Discovery Report".
 
     ### Project Name: {project}
 
-    ## Available ETL Mapping Documentation Tables:
-    {mapping_tables}
+    ### SQLite Querying Nomenclature:
+    1. **Physical Tables:** Use ONLY these SQLite tables in your `FROM` clause: {mapping_tables}.
+    2. **Business Values:** Names like `{target_table}` or `{target_col}` are **values** inside the columns of the Documentation Tables. 
+    3. **Syntax Rules:** 
+       - Always use `SELECT *` when validating a candidate to see the full context (Logic, Remarks, etc.).
+       - Use `LIKE '%pattern%'` for flexible column/value searches.
+       - Use double quotes for identifiers if they contain spaces (e.g., `SELECT "Source Column" FROM ...`).
 
-    ### Goal: Trace Lineage (Target -> Source)
-    - **Target Table:** `{target_table}`
-    - **Target Column:** `{target_col}`
+    ### Goal: Discovery for Mapping
+    - **Target Table (Value):** `{target_table}`
+    - **Target Column (Value):** `{target_col}`
 
-    ### How the Data is Structured:
-    The ETL mapping is stored in SQLite tables (prefixed with `fsdm_etl_`).
-    Each table has rows structured like: `[TargetTable, TargetColumn, SourceColumn, SourceTable]`.
-    Example: `TB1, C1, S1, TS1` means `C1` in `TB1` is derived from `S1` in `TS1`.
+    ### Discovery Process (INSTRUCTIONS ARE MANDATORY):
+    1. **Execute Targeted Probes:** 
+       - You MUST run at least two types of surgical queries to ensure complete discovery:
+         a) **Direct Match:** Filter for exactly `TargetTable = '{target_table}'` and `TargetColumn = '{target_col}'`.
+         b) **Pattern Search:** Filter for `TargetTable = '{target_table}'` and `TargetColumn LIKE '%_cd%'` (to identify code/lookup references as per instructions).
+    2. **Resolve via Metadata:** 
+       - If your queries return multiple rows for the same entity, use the provided `<fsdm_table_metadata>` to choose the **most recent or relevant** entry.
+       - Match the findings against the subject area and description provided in the metadata to ensure the discovery makes sense.
+    3. **Iterative Refinement:** 
+       - Use your high turn allowance to refine SQL if your first probes fail.
+       - Always **examine the entire row** (Logic, Remarks, etc.) once a candidate is found to validate the mapping.
+    4. **Trace the Chain:** Follow the lineage from Target -> Source. If the Source is itself a derived value or lookup, follow that chain until you reach the final physical source.
 
     ### Contextual Data
     <fsdm_table_metadata>
@@ -85,29 +100,49 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
     </instructions>
     {feedback_section}
 
-    ### Your Process:
-    1. **Examine Schema:** Use `lg_get_table_schema` to identify `TargetTable`, `TargetColumn`, `SourceTable`, and `SourceColumn` columns.
-    2. **Query Lineage:** Use `lg_query_db` to run a SELECT query.
-    3. **Synthesize:** Call `FSDMIntentOutput` with your findings.
+    ### Final Report Requirements:
+    You MUST call `FSDMIntentOutput` with a "Discovery Report" in the `lineage_intent` field. The report should be formatted as follows:
+
+    **1. Source Identification:**
+    - Primary Source Table: [Table Name]
+    - Primary Source Column: [Column Name]
+    - Secondary/Lookup Sources: [Any other tables/columns involved]
+
+    **2. Lineage Chain:**
+    - [Step-by-step path from Target back to Source]
+
+    **3. Mapping Considerations:**
+    - [Any transformation logic found in the docs]
+    - [Special filtering rules or constants]
+    - [Business rules mentioned in instructions or metadata]
+
+    **4. Verification Status:**
+    - [Confirmed/Incomplete/Ambiguous - explain why]
 
     ### Response Constraints
-    - **Format:** Single, concise paragraph with bullet points.
-    - **Content:** State the lineage hierarchy.
     - **Requirement:** **YOU MUST CALL `FSDMIntentOutput` to finish your task.**
 
-    When using the query tool, remember u are querying a sqlite db, so format prompt accordingly.
-    If after multiple attempts u cant find the output or some definitive answer, return back your findings do not go in a infinite loop.
+    - When using the query tool, remember u are querying a sqlite db, so format prompt accordingly.
+
+    - If after multiple attempts u cant find the output or some definitive answer, return back your findings in the report format above; do not go in a infinite loop.
     """
+            # PRINT SYSTEM PROMPT ONLY ONCE
+            SystemMessage(content=state['system_prompt']).pretty_print()
+
         messages = state['messages']
         if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=system_prompt)] + messages
+            messages = [SystemMessage(content=state['system_prompt'])] + messages
         else:
-            messages[0] = SystemMessage(content=system_prompt)
+            messages[0] = SystemMessage(content=state['system_prompt'])
+
+        # PRETTY PRINT the input message for this turn
+        print(f"\n--- [Detective Node: Turn Input] ---")
+        messages[-1].pretty_print()
 
         response = model.invoke(messages)
 
-        return {"messages": [response]}
-
+        # Return system_prompt to ensure LangGraph persists it in the state
+        return {"messages": [response], "system_prompt": state['system_prompt']}
 
 
     workflow.add_node("detective", detective_node)

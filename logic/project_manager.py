@@ -132,6 +132,9 @@ class ProjectManager:
                 target_info TEXT,
                 transformation_specs TEXT,
                 fsdm_intent TEXT,
+                fsdm_findings TEXT,
+                fsdm_reasoning TEXT,
+                fsdm_recommended_sources TEXT,
                 fsdm_status TEXT,
                 mapping_status TEXT,
                 transformation_type TEXT,
@@ -186,20 +189,29 @@ class ProjectManager:
         
         target_table = str(row_data.get('target_table', '')).strip()
         
+        # Extract individual FSDM fields if fsdm_intent is a dict
+        fsdm_data = row_data.get('fsdm_intent', {})
+        if not isinstance(fsdm_data, dict):
+            fsdm_data = {"lineage_intent": str(fsdm_data)}
+
         # Updated query to include new fields
         cursor.execute("""
             INSERT OR REPLACE INTO final_mappings (
                 row_idx, target_table, source_info, target_info, transformation_specs,
-                fsdm_intent, fsdm_status, mapping_status,
+                fsdm_intent, fsdm_findings, fsdm_reasoning, fsdm_recommended_sources,
+                fsdm_status, mapping_status,
                 transformation_type, transformation_logic, reasoning
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             row_data.get('row_idx'),
             target_table,
             json.dumps(row_data.get('source_info')),
             json.dumps(row_data.get('target_info')),
             json.dumps(row_data.get('transformation_specs')),
-            row_data.get('fsdm_intent'),
+            fsdm_data.get('lineage_intent', ''),
+            fsdm_data.get('findings', ''),
+            fsdm_data.get('reasoning', ''),
+            json.dumps(fsdm_data.get('recommended_sources', [])),
             row_data.get('fsdm_status'),
             row_data.get('mapping_status', 'Pending'),
             row_data.get('transformation_type'),

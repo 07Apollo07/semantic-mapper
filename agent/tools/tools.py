@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from logic.project_manager import ProjectManager
 from langchain_community.utilities import SQLDatabase
 import os
+from logic.project_manager import ProjectManager
 import pandas as pd
 import sqlite3
 import ast
@@ -228,9 +229,10 @@ def lg_get_fsdm_summary(tables: List[str], project_name: str) -> str:
 @tool
 def lg_get_instructions(scope: str, project_name: str) -> str:
     """Retrieves instructions for a given scope (global, mapping, fsdm)."""
-    print(f"[Tool: Instructions] Scope: {scope}, Project: {project_name}")
-    res = f"Instructions for {scope}..."
-    print(f"[Tool: Instructions] Result: {res}")
+    print(f"[Tool: Instructions] Fetching scope: {scope}, Project: {project_name}")
+    instr = ProjectManager.get_instructions(project_name, scope)
+    res = instr if instr and instr.strip() != "" else f"No instructions defined for {scope}."
+    print(f"[Tool: Instructions] Result length: {len(res)}")
     return res
 
 # # # @tool

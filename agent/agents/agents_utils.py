@@ -14,6 +14,7 @@ class FSDMDiscoveryState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
+    system_prompt: Optional[str] # Cache for the system prompt
 
 class FSDMIntentOutput(BaseModel):
     lineage_intent: str = Field(description="Detailed explanation of the lineage chain (e.g., A -> B -> C).")
@@ -28,7 +29,7 @@ class SemanticMappingState(TypedDict):
     transformation_specs: Dict[str, Any]
     global_instructions: str
     mapping_instructions: str
-    fsdm_lineage_intent: str # Input from Phase 1
+    fsdm_lineage_intent: Dict[str, Any] # Full Discovery Report from Phase 1
     vector_context: str # Context from Vector Store
     transformation_logic: str # Output
     reasoning: str # Output
@@ -36,6 +37,7 @@ class SemanticMappingState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
+    system_prompt: Optional[str] # Cache for the system prompt
 
 class MappingOutput(BaseModel):
     transformation_type: str = Field(description="Type of transformation: e.g., 1:1, Join, Aggregation, Case expression.")

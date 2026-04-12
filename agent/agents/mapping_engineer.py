@@ -17,6 +17,8 @@ def should_continue(state: SemanticMappingState):
         print(f"[Engineer Debug] Tool calls detected: {[tc['name'] for tc in last_message.tool_calls]}")
         for tc in last_message.tool_calls:
             if tc['name'] == 'MappingOutput':
+                print(f"\n--- [Engineer Node: Turn Input] ---")
+                state['messages'][-1].pretty_print()
                 print(f"[Engineer Debug] MappingOutput called. Ending.")
                 return "end"
         return "tools"
@@ -77,30 +79,62 @@ def create_mapping_engineer(retriever, model_name="gpt-4o", api_key=None, base_u
         t_info = state['target_info']
         feedback = state.get('feedback')
         vector_context = state.get('vector_context', 'No additional documentation found.')
-        lineage_intent = state.get('fsdm_lineage_intent', 'No lineage context provided.')
         
-        print(f"[Engineer Debug] Current History: {(state['messages'])}")
-        print(f"[Engineer Debug] Processing SQL mapping for {s_info.get('column_name')} in project {project}")
+        # Extract full discovery report
+        discovery = state.get('fsdm_lineage_intent', {})
+        lineage_report = discovery.get('lineage_intent', 'No report provided.')
+        findings = discovery.get('findings', 'N/A')
+        reasoning = discovery.get('reasoning', 'N/A')
+        sources = ", ".join(discovery.get('recommended_sources', [])) or 'N/A'
         
-        # 1. Fetch contextual instructions
-        global_instr = lg_get_instructions.invoke({"scope": "global", "project_name": project})
-        mapping_instr = lg_get_instructions.invoke({"scope": "mapping", "project_name": project})
-        
-        feedback_section = f"\n<human_feedback>\n{feedback}\n</human_feedback>\n" if feedback else ""
+        # Use cached prompt if available, otherwise generate, cache, and PRINT it
+        if 'system_prompt' not in state:
+            # 1. Fetch contextual instructions
+            global_instr = lg_get_instructions.invoke({"scope": "global", "project_name": project})
+            mapping_instr = lg_get_instructions.invoke({"scope": "mapping", "project_name": project})
+            
+            feedback_section = f"\n<human_feedback>\n{feedback}\n</human_feedback>\n" if feedback else ""
+            trans_specs = state.get('transformation_specs', {})
 
-        system_prompt = f"""### Role
+            state['system_prompt'] = f"""### Role
 You are an expert **SQL Engineer**. Your goal is to write a precise SQL transformation that maps source columns to a target semantic model.
 
 ### Project Name: {project}
 
-### Target Requirement
-Map source column `{s_info.get('column_name')}` from table `{s_info.get('table_name')}` 
-to target column `{t_info.get('column_name')}` in table `{t_info.get('table_name')}`.
+### 1. Core Mapping Requirements (Primary Source for SELECT)
+The following information defines the base mapping logic:
 
-### Intelligence & Context
-<fsdm_lineage_intelligence>
-{lineage_intent}
-</fsdm_lineage_intelligence>
+**Source Information:**
+- **Subject Area:** {s_info.get('subject_area', 'N/A')}
+- **Database:** {s_info.get('db_name', 'N/A')}
+- **Table:** {s_info.get('table_name', 'N/A')}
+- **Column:** {s_info.get('column_name', 'N/A')}
+- **Datatype:** {s_info.get('datatype', 'N/A')}
+
+**Target Information:**
+- **Subject Area:** {t_info.get('subject_area', 'N/A')}
+- **Database:** {t_info.get('db_name', 'N/A')}
+- **Table:** {t_info.get('table_name', 'N/A')}
+- **Column:** {t_info.get('column_name', 'N/A')}
+- **Datatype:** {t_info.get('datatype', 'N/A')}
+
+**Transformation Specifications:**
+- **Type:** {trans_specs.get('type', 'N/A')}
+- **Condition:** {trans_specs.get('condition', 'N/A')}
+- **Remarks:** {trans_specs.get('remarks', 'N/A')}
+
+### 2. Discovery Intelligence (Source for WHERE/JOIN/CONSIDERATIONS)
+Use the following report from the Discovery Agent to identify filtering rules (WHERE clauses), lookup tables (JOINS), and specific business logic constants:
+
+<fsdm_discovery_report>
+{lineage_report}
+</fsdm_discovery_report>
+
+<fsdm_discovery_findings>
+- **Summary:** {findings}
+- **Logical Reasoning:** {reasoning}
+- **Identified Source Entities:** {sources}
+</fsdm_discovery_findings>
 
 <retrieved_documentation>
 {vector_context}
@@ -118,27 +152,34 @@ to target column `{t_info.get('column_name')}` in table `{t_info.get('table_name
 3. **Tool Termination:** YOU MUST CALL `MappingOutput` to submit your final SQL transformation.
 
 ### Your Process:
-1. **Intelligence Analysis:** Use `<fsdm_lineage_intelligence>` and `<retrieved_documentation>` to determine logic.
-2. **Schema Verification:** Use `lg_get_table_schema` to verify actual column names in the physical database.
-3. **SQL Construction:** Build the SQL expression based on requirements and verified schemas.
-4. **Submission:** Call `MappingOutput` with your findings.
+1. **Base SQL:** Use the **Core Mapping Requirements** to establish the primary SELECT/Expression.
+2. **Refine with Discovery:** Use the **Discovery Intelligence** to add necessary WHERE clauses, filter constants, or JOIN requirements.
+3. **Schema Verification:** Use `lg_get_table_schema` to verify actual column names in the physical database.
+4. **Submission:** Call `MappingOutput` with your final logic.
 
 ### Response Constraints
-- **Format:** Single, concise paragraph with bullet points.
-- **Content:** State the lineage hierarchy and key technical considerations.
 - **Requirement:** **YOU MUST CALL `MappingOutput` to finish your task.**
 """
+            # PRINT SYSTEM PROMPT ONLY ONCE
+            SystemMessage(content=state['system_prompt']).pretty_print()
+        
         messages = state['messages']
         if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=system_prompt)] + messages
+            messages = [SystemMessage(content=state['system_prompt'])] + messages
         else:
-            messages[0] = SystemMessage(content=system_prompt)
+            messages[0] = SystemMessage(content=state['system_prompt'])
+        
+        # PRETTY PRINT the input message for this turn
+        print(f"\n--- [Engineer Node: Turn Input] ---")
+        messages[-1].pretty_print()
+        print(f"[Engineer Debug] Processing SQL mapping for {s_info.get('column_name')} in project {project}")
         
         response = model.invoke(messages)
         if response.content:
             print(f"[Engineer Debug] Model thoughts: {response.content}...")
             
-        return {"messages": [response]}
+        # Return system_prompt to ensure LangGraph persists it in the state
+        return {"messages": [response], "system_prompt": state['system_prompt']}
 
     workflow.add_node("retrieve", retrieval_node)
     workflow.add_node("engineer", engineer_node)

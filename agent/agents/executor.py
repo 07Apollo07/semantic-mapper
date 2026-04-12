@@ -51,13 +51,15 @@ class AgentExecutor:
         self.state.add_log(message)
         print(message)
 
-    def _get_table_metadata(self, table_name: str) -> str:
-        """Finds metadata for a specific FSDM table from the state's inventory."""
+    def _get_table_metadata(self) -> str:
+        """Finds and formats metadata for all FSDM tables from the state's inventory."""
+        formatted_metadata = ""
         for item in self.state.fsdm_inventory:
             for s_name, s_info in item.get("sheets", {}).items():
-                if s_name == table_name:
-                    return s_info.get("metadata", "No metadata found for this table.")
-        return "Table not found in FSDM inventory metadata."
+                meta = s_info.get("metadata", "No metadata provided.")
+                formatted_metadata += f"Metadata for table fsdm_etl_{s_name}:\n{meta}\n\n"
+        
+        return formatted_metadata if formatted_metadata else "No metadata found for FSDM tables."
 
     def process_row(self, row_data: Dict[str, Any], row_idx: int, feedback: Optional[str] = None) -> Dict[str, Any]:
         """Invokes the FSDM Detective Agent followed by the Mapping Engineer Agent."""
@@ -77,7 +79,7 @@ class AgentExecutor:
         # 1. Phase 1: FSDM Lineage Discovery (Detective)
         self._log(f"🕵️ [Detective] Tracing lineage for Row {row_idx} ({source_table})...")
         
-        metadata = self._get_table_metadata(source_table)
+        metadata = self._get_table_metadata()
         
         fsdm_inputs = {
             "source_info": source_info,
@@ -90,7 +92,7 @@ class AgentExecutor:
         if feedback:
             fsdm_inputs["feedback"] = feedback
 
-        lineage_intent = "No lineage context provided."
+        lineage_intent = {} # Dictionary to hold full discovery report
         lineage_status = "Failed"
 
         try:
@@ -101,16 +103,16 @@ class AgentExecutor:
                 # Find FSDMIntentOutput call
                 intent_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'FSDMIntentOutput'), None)
                 if intent_call:
-                    lineage_intent = intent_call['args'].get('lineage_intent', "No intent generated.")
+                    lineage_intent = intent_call['args']
                     lineage_status = "Success"
-                    self._log(f"✅ [Detective] Lineage traced.")
+                    self._log(f"✅ [Detective] Lineage traced and discovery report gathered.")
                 else:
                     self._log(f"⚠️ [Detective] No structured output.")
             else:
                 self._log(f"❌ [Detective] Failed to provide AIMessage with tool calls.")
         except Exception as e:
             self._log(f"❌ [Detective] Error: {str(e)}")
-            lineage_intent = f"Error during discovery: {str(e)}"
+            lineage_intent = {"error": str(e)}
 
         # 2. Phase 2: SQL Engineering (Engineer)
         self._log(f"⚙️ [Engineer] Generating SQL for Row {row_idx}...")

@@ -559,14 +559,41 @@ else:
 
                 feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}", disabled=sql_is_verified)
             
-                def on_regen_row(idx, feed, row_data):
+                def on_regen_fsdm(idx, row_data):
+                    feed = st.session_state.get(f"feed_{idx}", "")
                     state.sync()
-                    with st.spinner(f"Regenerating row {idx}..."):
+                    with st.spinner(f"Regenerating FSDM for row {idx}..."):
                         executor = AgentExecutor(state)
-                        new_res = executor.process_row(row_data, idx, feedback=feed)
-                        ProjectManager.save_mapping_row(state.current_project, new_res)
+                        new_fsdm = executor.process_fsdm_only(row_data, idx, feedback=feed)
+                        # Update DB with new FSDM intent
+                        ProjectManager.update_mapping_row(state.current_project, idx, {
+                            "fsdm_intent": new_fsdm.get("fsdm_intent", {}).get("lineage_intent", ""),
+                            "fsdm_findings": new_fsdm.get("fsdm_intent", {}).get("findings", ""),
+                            "fsdm_reasoning": new_fsdm.get("fsdm_intent", {}).get("reasoning", ""),
+                            "fsdm_recommended_sources": new_fsdm.get("fsdm_intent", {}).get("recommended_sources", []),
+                            "fsdm_status": new_fsdm.get("fsdm_status")
+                        })
+
+                def on_regen_sql(idx, row_data):
+                    feed = st.session_state.get(f"feed_{idx}", "")
+                    state.sync()
+                    with st.spinner(f"Regenerating SQL for row {idx}..."):
+                        executor = AgentExecutor(state)
+                        # We need to make sure row_data has the latest fsdm_intent from DB
+                        latest_row = ProjectManager.get_mapping_by_row(state.current_project, idx)
+                        row_data['fsdm_intent'] = {
+                            "lineage_intent": latest_row.get('fsdm_intent'),
+                            "findings": latest_row.get('fsdm_findings'),
+                            "reasoning": latest_row.get('fsdm_reasoning'),
+                            "recommended_sources": latest_row.get('fsdm_recommended_sources') or []
+                        }
+                        new_res = executor.process_mapping_only(row_data, idx, feedback=feed)
+                        ProjectManager.update_mapping_row(state.current_project, idx, new_res)
             
-                if st.button("🔄 Regenerate SQL", key=f"btn_{row_idx}", on_click=on_regen_row, args=(row_idx, feedback, res), disabled=sql_is_verified):
+                c_btn1, c_btn2 = st.columns(2)
+                if c_btn1.button("🔄 Regenerate FSDM", key=f"btn_fsdm_{row_idx}", on_click=on_regen_fsdm, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
+                    st.rerun()
+                if c_btn2.button("⚙️ Regenerate SQL", key=f"btn_sql_{row_idx}", on_click=on_regen_sql, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
                     st.rerun()
 
     # Export all tables from DB

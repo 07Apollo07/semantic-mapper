@@ -91,10 +91,14 @@ def render_mapping_selection(state: AppState):
                                 new_selected_ids.remove(rid)
 
     # 5. Update
-    if new_selected_ids != selected_ids:
-        print(f"[DEBUG] Selection changed: {len(new_selected_ids)} rows.")
-        print(f"[DEBUG] Selected IDs: {list(new_selected_ids)}")
-        state.selected_mapping_rows = list(new_selected_ids)
+    if set(new_selected_ids) != set(selected_ids):
+        # Sort by row index (the part after the last '|')
+        def get_row_idx(unique_id):
+            return int(unique_id.split('|')[-1])
+        
+        sorted_ids = sorted(list(new_selected_ids), key=get_row_idx)
+        print(f"[DEBUG] Selection changed: {len(sorted_ids)} rows.")
+        state.selected_mapping_rows = sorted_ids
         state.save_project()
         st.rerun()
 

@@ -1,7 +1,8 @@
 import pandas as pd
 from typing import Dict, Any, List, Optional
 from agent.agents.fsdm_detective import create_fsdm_detective
-from agent.agents.mapping_engineer import create_mapping_engineer
+# from agent.agents.mapping_engineer import create_mapping_engineer
+from agent.agents.mapping_oneshot import create_mapping_oneshot
 from agent.agents.agents_utils import FSDMDiscoveryState, SemanticMappingState
 from logic.utils import get_cell_value
 from langchain_core.messages import HumanMessage, AIMessage
@@ -36,7 +37,7 @@ class AgentExecutor:
                 api_key=llm_config["api_key"],
                 base_url=llm_config["base_url"]
             )
-            self.mapping_engineer = create_mapping_engineer(
+            self.mapping_engineer = create_mapping_oneshot(
                 retriever=retriever,
                 model_name=llm_config["model_name"],
                 api_key=llm_config["api_key"],
@@ -57,7 +58,8 @@ class AgentExecutor:
         for item in self.state.fsdm_inventory:
             for s_name, s_info in item.get("sheets", {}).items():
                 meta = s_info.get("metadata", "No metadata provided.")
-                formatted_metadata += f"Metadata for table fsdm_etl_{s_name}:\n{meta}\n\n"
+                s_name_low = s_name.lower()
+                formatted_metadata += f"Metadata for table fsdm_etl_{s_name_low}:\n{meta}\n\n"
         
         return formatted_metadata if formatted_metadata else "No metadata found for FSDM tables."
 
@@ -152,6 +154,105 @@ class AgentExecutor:
                         "reasoning": args.get('reasoning')
                     })
                     self._log(f"✅ [Engineer] SQL Generated.")
+                    return mapping_res
+            
+            self._log(f"❌ [Engineer] No structured output.")
+            mapping_res["mapping_status"] = "Error: Failed to call MappingOutput."
+            return mapping_res
+        except Exception as e:
+            self._log(f"❌ [Engineer] Error: {str(e)}")
+            mapping_res["mapping_status"] = f"Error: {str(e)}"
+            return mapping_res
+
+    def process_fsdm_only(self, row_data: Dict[str, Any], row_idx: int, feedback: Optional[str] = None) -> Dict[str, Any]:
+        """Regenerates only the FSDM Discovery Phase (Phase 1)."""
+        self._initialize_agents()
+        
+        if self.fsdm_detective is None:
+            return {"row_idx": row_idx, "fsdm_status": "Error: Detective not initialized."}
+
+        source_info = row_data.get('source_info', {})
+        self._log(f"🕵️ [Detective] Regenerating lineage for Row {row_idx}...")
+        
+        metadata = self._get_table_metadata()
+        fsdm_inputs = {
+            "source_info": source_info,
+            "target_info": row_data.get('target_info', {}),
+            "fsdm_instructions": "", 
+            "metadata": metadata,
+            "project_name": self.state.current_project,
+            "messages": [HumanMessage(content=f"Regenerate lineage for {source_info.get('column_name')}.")],
+            "feedback": feedback
+        }
+
+        lineage_intent = {}
+        lineage_status = "Failed"
+
+        try:
+            fsdm_res = self.fsdm_detective.invoke(fsdm_inputs)
+            last_msg = fsdm_res['messages'][-1]
+            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                intent_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'FSDMIntentOutput'), None)
+                if intent_call:
+                    lineage_intent = intent_call['args']
+                    lineage_status = "Success"
+                    self._log(f"✅ [Detective] Lineage regeneration successful.")
+                else:
+                    self._log(f"⚠️ [Detective] No structured output.")
+            else:
+                self._log(f"❌ [Detective] Failed to provide AIMessage with tool calls.")
+        except Exception as e:
+            self._log(f"❌ [Detective] Error: {str(e)}")
+            lineage_intent = {"error": str(e)}
+
+        return {
+            "row_idx": row_idx,
+            "fsdm_intent": lineage_intent,
+            "fsdm_status": lineage_status
+        }
+
+    def process_mapping_only(self, row_data: Dict[str, Any], row_idx: int, feedback: Optional[str] = None) -> Dict[str, Any]:
+        """Regenerates only the SQL Engineering Phase (Phase 2)."""
+        self._initialize_agents()
+        
+        if self.mapping_engineer is None:
+            return {"row_idx": row_idx, "mapping_status": "Error: Engineer not initialized."}
+
+        source_info = row_data.get('source_info', {})
+        # We reuse existing fsdm_intent if available in row_data
+        lineage_intent = row_data.get('fsdm_intent', {})
+        
+        self._log(f"⚙️ [Engineer] Regenerating SQL for Row {row_idx}...")
+        
+        mapping_inputs = {
+            "source_info": source_info,
+            "target_info": row_data.get('target_info', {}),
+            "transformation_specs": row_data.get('transformation_specs', {}),
+            "fsdm_lineage_intent": lineage_intent,
+            "project_name": self.state.current_project,
+            "messages": [HumanMessage(content="Regenerate SQL mapping.")],
+            "feedback": feedback
+        }
+
+        mapping_res = {
+            "row_idx": row_idx,
+            "mapping_status": "Pending"
+        }
+
+        try:
+            eng_res = self.mapping_engineer.invoke(mapping_inputs)
+            last_msg = eng_res['messages'][-1]
+            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                output_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'MappingOutput'), None)
+                if output_call:
+                    args = output_call['args']
+                    mapping_res.update({
+                        "mapping_status": "Complete",
+                        "transformation_type": args.get('transformation_type'),
+                        "transformation_logic": args.get('transformation_logic'),
+                        "reasoning": args.get('reasoning')
+                    })
+                    self._log(f"✅ [Engineer] SQL regenerated.")
                     return mapping_res
             
             self._log(f"❌ [Engineer] No structured output.")

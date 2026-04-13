@@ -28,7 +28,7 @@ def should_continue(state: FSDMDiscoveryState):
 def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
     llm = ChatOpenAI(
         model=model_name,
-        temperature=0.1,
+        # temperature=0.1,
         api_key=api_key if api_key and api_key.strip() != "" else "not-needed",
         base_url=f"{base_url.rstrip('/')}/v1" if base_url else None
     )
@@ -64,40 +64,44 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
 
     ### Project Name: {project}
 
-    ### SQLite Querying Nomenclature:
-    1. **Physical Tables:** Use ONLY these SQLite tables in your `FROM` clause: {mapping_tables}.
-    2. **Business Values:** Names like `{target_table}` or `{target_col}` are **values** inside the columns of the Documentation Tables. 
-    3. **Syntax Rules:** 
-       - Always use `SELECT *` when validating a candidate to see the full context (Logic, Remarks, etc.).
-       - Use `LIKE '%pattern%'` for flexible column/value searches.
-       - Use double quotes for identifiers if they contain spaces (e.g., `SELECT "Source Column" FROM ...`).
-
     ### Goal: Discovery for Mapping
     - **Target Table (Value):** `{target_table}`
     - **Target Column (Value):** `{target_col}`
 
-    ### Discovery Process (INSTRUCTIONS ARE MANDATORY):
+    ### Discovery Process:
     1. **Execute Targeted Probes:** 
-       - You MUST run at least two types of surgical queries to ensure complete discovery:
-         a) **Direct Match:** Filter for exactly `TargetTable = '{target_table}'` and `TargetColumn = '{target_col}'`.
-         b) **Pattern Search:** Filter for `TargetTable = '{target_table}'` and `TargetColumn LIKE '%_cd%'` (to identify code/lookup references as per instructions).
+       - Use strategic queries to ensure complete discovery:
+         a) **Direct Match:** Filter exactly for the Target Table and Target Column values provided in the Goal section above.
+         b) **Pattern Search (Optional):** Search for related patterns if needed to identify lookup references or join keys (e.g., searching for columns with suffixes like `_cd`, `_key`, or `_id` as appropriate for the context).
     2. **Resolve via Metadata:** 
        - If your queries return multiple rows for the same entity, use the provided `<fsdm_table_metadata>` to choose the **most recent or relevant** entry.
        - Match the findings against the subject area and description provided in the metadata to ensure the discovery makes sense.
     3. **Iterative Refinement:** 
        - Use your high turn allowance to refine SQL if your first probes fail.
-       - Always **examine the entire row** (Logic, Remarks, etc.) once a candidate is found to validate the mapping.
+       - Always **examine the candidate row** (Logic, Remarks, etc.) once found to validate the mapping.
     4. **Trace the Chain:** Follow the lineage from Target -> Source. If the Source is itself a derived value or lookup, follow that chain until you reach the final physical source.
 
+    ### SQLite Querying Nomenclature:
+    1. **Physical Tables:** Use ONLY these SQLite tables in your `FROM` clause: {mapping_tables}.
+    2. **Business Values:** Names like `{target_table}` or `{target_col}` are **values** inside the columns of the Documentation Tables. 
+    3. **Syntax Rules:** 
+       - Use `SELECT *` only when you have specific filters to see the full context (Logic, Remarks, etc.) of a few candidates.
+       - If you expect many rows, use specific column names or `LIMIT` to avoid context overflow.
+       - Use `LIKE '%pattern%'` for flexible column/value searches.
+       - Use double quotes for identifiers if they contain spaces (e.g., `SELECT "Source Column" FROM ...`).
+
     ### Contextual Data
+    This is the metadata for {mapping_tables} which tells you which column means what, This will help you in querying it
     <fsdm_table_metadata>
     {state.get('metadata', 'No table metadata provided.')}
     </fsdm_table_metadata>
 
     <instructions>
+    These are Instructions given by user, you will take these with utmost importance and make sure these criterias are met while querying the table
     - **Global Styles:** {global_instr}
     - **FSDM-Specific Rules:** {fsdm_instr}
     </instructions>
+    
     {feedback_section}
 
     ### Final Report Requirements:

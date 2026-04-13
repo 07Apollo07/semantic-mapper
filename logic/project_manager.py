@@ -246,6 +246,60 @@ class ProjectManager:
         return results
 
     @staticmethod
+    def update_mapping_row(project_name: str, row_idx: int, updates: Dict[str, Any]):
+        import sqlite3
+        import json
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Filter out keys that are not in the table schema if needed, 
+        # but for simplicity we assume updates keys match column names.
+        
+        # Handle JSON serialization for dict/list values
+        processed_updates = {}
+        for k, v in updates.items():
+            if isinstance(v, (dict, list)):
+                processed_updates[k] = json.dumps(v)
+            else:
+                processed_updates[k] = v
+
+        set_clause = ", ".join([f"{k} = ?" for k in processed_updates.keys()])
+        params = list(processed_updates.values()) + [row_idx]
+        
+        cursor.execute(f"UPDATE final_mappings SET {set_clause} WHERE row_idx = ?", params)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_mapping_by_row(project_name: str, row_idx: int) -> Dict[str, Any]:
+        import sqlite3
+        import json
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return {}
+            
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM final_mappings WHERE row_idx = ?", (row_idx,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            res = dict(row)
+            # Try to parse JSON fields
+            for field in ['source_info', 'target_info', 'transformation_specs', 'fsdm_recommended_sources']:
+                if res.get(field):
+                    try:
+                        res[field] = json.loads(res[field])
+                    except:
+                        pass
+            return res
+        return {}
+
+    @staticmethod
     def update_mapping_validation(project_name: str, row_idx: int, updates: Dict[str, Any]):
         import sqlite3
         db_path = ProjectManager.get_db_path(project_name)

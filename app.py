@@ -270,7 +270,9 @@ if state.fsdm_inventory:
                             current_meta = state.fsdm_inventory[idx]["sheets"][s_name].get("metadata", "")
                             if st.button("✨ Generate Metadata", key=f"gen_meta_{item['name']}_{s_name}"):
                                 with st.spinner("Analyzing data..."):
-                                    sample_df = sample_table_data_logic("fsdm_etl_" + s_name, state.current_project)
+                                    table_name = ProjectManager.get_sanitized_table_name("FSDM/ETL_" + s_name)
+                                    sample_df = sample_table_data_logic(table_name, state.current_project)
+                                    print(sample_df)
                                     new_meta = generate_metadata(
                                         sample_df, 
                                         state.selected_model, 

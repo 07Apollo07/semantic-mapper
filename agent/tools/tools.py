@@ -8,8 +8,6 @@ import pandas as pd
 import sqlite3
 import ast
 
-# Core Logic Functions (remain as internal helpers or exported as needed)
-
 def list_project_tables_logic(project_name: str) -> str:
     """
     Lists all available tables in the project's SQLite database.
@@ -79,16 +77,21 @@ def get_table_schema_logic(table_name: str, project_name: str) -> str:
 
 def sample_table_data_logic(table_name: str, project_name: str, n: int = 5) -> str:
     """
-    Returns the first N rows of a table with headers to help understand the data format.
-    Use this if you are unsure about column values or formats.
+    Returns the first N rows of a table in a raw format: 
+    First line contains headers as a tuple, 
+    Second line contains data as a list of tuples.
     """
     db_path = ProjectManager.get_db_path(project_name)
     conn = sqlite3.connect(db_path)
     try:
-        df = pd.read_sql_query(f'SELECT * FROM "{table_name}" LIMIT {n}', conn)
-        return df.to_string(index=False)
+        cursor = conn.cursor()
+        cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {n}')
+        rows = cursor.fetchall()
+        headers = tuple([description[0] for description in cursor.description])
+
+        return f"Headers: {headers}\nRows: {rows}"
     except Exception as e:
-        return f"Error sampling data: {str(e)}"
+        return f"Error sampling data from {table_name}: {str(e)}"
     finally:
         conn.close()
 

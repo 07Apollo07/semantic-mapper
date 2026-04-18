@@ -7,7 +7,7 @@ from logic import (
     AppState,
     ProjectManager
 )
-from logic.fsdm.service import FSDMService
+from logic.db.service import DBService
 from logic.mapping.config import MappingConfig
 from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
@@ -89,7 +89,7 @@ if uploaded_files:
             file_bytes = f.read()
             
             # Save to disk
-            ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/vs")
+            ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/semantic")
             
             if f.name.endswith(".pdf"):
                 inventory.append({
@@ -157,22 +157,50 @@ if state.kb_inventory:
                 col_name.markdown(f"📊 **{item['name']}**")
                 with col_name.expander("Show Sheets"):
                     for s_name, s_info in sheets_data.items():
-                        s_col1, s_col2 = st.columns([3, 1])
-                        checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_{item['name']}_{s_name}")
+                        s_col1, s_col2, s_col3 = st.columns([3, 1, 1])
+                        checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_semantic_{item['name']}_{s_name}_{idx}")
                         if checked != s_info["selected"]:
                             inventory[idx]["sheets"][s_name]["selected"] = checked
                             state.kb_inventory = inventory
                             state.save_project()
                             st.rerun()
-                        if s_info["indexed"]:
-                            s_col2.markdown(":green[Indexed]")
-            
+
+                        if s_info.get("indexed_sql"):
+                            s_col2.markdown(":green[In DB]")
+                            s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_semantic_{item['name']}_{s_name}_{idx}", disabled=True)
+                            
+                            # Metadata Management
+                            with st.expander("⚙️ Metadata"):
+                                current_meta = s_info.get("metadata", "")
+                                if st.button("✨ Generate Metadata", key=f"gen_meta_semantic_{item['name']}_{s_name}_{idx}"):
+                                    with st.spinner("Analyzing data..."):
+                                        table_name = ProjectManager.get_sanitized_table_name("semantic_fsdm_" + s_name)
+                                        sample_df = sample_table_data_logic(table_name, state.current_project)
+                                        s_info["metadata"] = generate_metadata(
+                                            sample_df, state.selected_model, state.api_key, state.base_url
+                                        )
+                                        state.save_project()
+                                        st.rerun()
+                                            
+                                new_val = st.text_area("Table Definitions/Instructions", value=current_meta, key=f"meta_semantic_{item['name']}_{s_name}_{idx}")
+                                if new_val != current_meta:
+                                    s_info["metadata"] = new_val
+                                    state.save_project()
+                                    st.rerun()
+                        
+                        elif s_info.get("selected"):
+                            # Header Merge
+                            merge_check = s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_semantic_{item['name']}_{s_name}_{idx}")
+                            if merge_check != s_info.get("combine_headers", False):
+                                s_info["combine_headers"] = merge_check
+                                state.save_project()
+                                st.rerun()
             if col_rm.button("🗑️", key=f"del_file_{idx}"):
-                # Remove from vector store
-                state.v_service.remove_source(item["name"])
+                # Use unified cleanup
+                ProjectManager.cleanup_resources(state.current_project, item, state.v_service, DBService, prefix="semantic_fsdm_")
                 
                 # Remove from disk
-                ProjectManager.delete_file(state.current_project, item["name"])
+                ProjectManager.delete_file(state.current_project, item["name"], sub_dir="files/semantic")
                 
                 inventory.pop(idx)
                 state.kb_inventory = inventory
@@ -183,12 +211,16 @@ if state.kb_inventory:
     # --- 3. Action Buttons ---
     col_btn1, col_btn2 = st.columns([1, 1])
     if needs_sync:
-        if col_btn1.button("🔄 Sync with Vector Store", type="primary", width='stretch'):
-            with st.spinner("Syncing changes..."):
-                state.v_service.sync_project(inventory)
+        if col_btn1.button("🔄 Sync with Vector & DB", type="primary", width='stretch'):
+            with st.spinner("Syncing to Vector Store and SQLite..."):
+                for idx, item in enumerate(inventory):
+                    inventory[idx] = ProjectManager.sync_to_storage(
+                        state.current_project, item, state.v_service, DBService, prefix="semantic_fsdm_"
+                    )
+                
                 state.kb_inventory = inventory
                 state.save_project()
-                st.success("Vector Store synced!")
+                st.success("Vector Store & DB updated!")
                 st.rerun()
     
     if col_btn2.button("🧹 Clear All", width='stretch'):
@@ -254,7 +286,7 @@ if state.fsdm_inventory:
             with col_name.expander("Show Sheets"):
                 for s_name, s_info in sheets_data.items():
                     s_col1, s_col2, s_col3 = st.columns([3, 1, 1])
-                    checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_fsdm_{item['name']}_{s_name}")
+                    checked = s_col1.checkbox(f"{s_name}", value=s_info["selected"], key=f"sel_fsdm_{item['name']}_{s_name}_{idx}")
                     if checked != s_info["selected"]:
                         fsdm_inventory[idx]["sheets"][s_name]["selected"] = checked
                         state.fsdm_inventory = fsdm_inventory
@@ -262,13 +294,13 @@ if state.fsdm_inventory:
                         st.rerun()
                     if s_info["indexed"]:
                         s_col2.markdown(":green[In DB]")
-                        s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_{item['name']}_{s_name}", disabled=True)
+                        s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_fsdm_{item['name']}_{s_name}_{idx}", disabled=True)
                         
                         # Metadata Management
                         with st.expander("⚙️ Metadata"):
                             # Read directly from state
                             current_meta = state.fsdm_inventory[idx]["sheets"][s_name].get("metadata", "")
-                            if st.button("✨ Generate Metadata", key=f"gen_meta_{item['name']}_{s_name}"):
+                            if st.button("✨ Generate Metadata", key=f"gen_meta_fsdm_{item['name']}_{s_name}_{idx}"):
                                 with st.spinner("Analyzing data..."):
                                     table_name = ProjectManager.get_sanitized_table_name("FSDM/ETL_" + s_name)
                                     sample_df = sample_table_data_logic(table_name, state.current_project)
@@ -286,7 +318,7 @@ if state.fsdm_inventory:
                             new_val = st.text_area(
                                 "Table Definitions/Instructions", 
                                 value=current_meta, 
-                                key=f"meta_{item['name']}_{s_name}_{hash(current_meta)}"
+                                key=f"meta_fsdm_{item['name']}_{s_name}_{hash(current_meta)}_{idx}"
                             )
                             if new_val != current_meta:
                                 state.fsdm_inventory[idx]["sheets"][s_name]["metadata"] = new_val
@@ -294,7 +326,7 @@ if state.fsdm_inventory:
                                 st.rerun()
                                 
                     elif s_info["selected"]:
-                        merge_check = s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_{item['name']}_{s_name}")
+                        merge_check = s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_fsdm_{item['name']}_{s_name}_{idx}")
                         if merge_check != s_info.get("combine_headers", False):
                             fsdm_inventory[idx]["sheets"][s_name]["combine_headers"] = merge_check
                             state.fsdm_inventory = fsdm_inventory
@@ -302,13 +334,11 @@ if state.fsdm_inventory:
                             st.rerun()
             
             if col_rm.button("🗑️", key=f"del_fsdm_file_{idx}"):
-                # --- NEW LOGIC START ---
-                # Drop associated tables from DB before deleting the file
-                FSDMService.delete_all_tables_for_item(state.current_project, item)
-                # --- NEW LOGIC END ---
+                # Use unified cleanup
+                ProjectManager.cleanup_resources(state.current_project, item, state.v_service, DBService, prefix="fsdm_etl_")
 
                 # Remove from disk
-                ProjectManager.delete_file(state.current_project, item["name"])
+                ProjectManager.delete_file(state.current_project, item["name"], sub_dir="files/fsdm")
                 
                 fsdm_inventory.pop(idx)
                 state.fsdm_inventory = fsdm_inventory
@@ -318,14 +348,16 @@ if state.fsdm_inventory:
 
     # --- 3. Action Buttons ---
     if needs_db_sync:
-        if st.button("🗄️ Create DB / Sync Tables", type="primary", width='stretch'):
-            with st.spinner("Syncing to SQLite..."):
+        if st.button("🗄️ Sync Tables & Vector", type="primary", width='stretch'):
+            with st.spinner("Syncing to SQLite and Vector Store..."):
                 for idx, item in enumerate(fsdm_inventory):
-                    fsdm_inventory[idx] = FSDMService.sync(state.current_project, item)
+                    fsdm_inventory[idx] = ProjectManager.sync_to_storage(
+                        state.current_project, item, state.v_service, DBService, prefix="fsdm_etl_"
+                    )
                 
                 state.fsdm_inventory = fsdm_inventory
                 state.save_project()
-                st.success("SQLite DB updated!")
+                st.success("SQLite & Vector Store updated!")
                 st.rerun()
 
 st.divider()

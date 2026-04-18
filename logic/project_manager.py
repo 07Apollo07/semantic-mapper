@@ -57,8 +57,8 @@ class ProjectManager:
         return None
 
     @staticmethod
-    def delete_file(project_name: str, filename: str) -> bool:
-        path = os.path.join(PROJECTS_DIR, project_name, "files", filename)
+    def delete_file(project_name: str, filename: str, sub_dir: str = "files") -> bool:
+        path = os.path.join(PROJECTS_DIR, project_name, sub_dir, filename)
         if os.path.exists(path):
             os.remove(path)
             return True
@@ -419,36 +419,36 @@ class ProjectManager:
             conn.close()
 
     @staticmethod
-    def drop_excel_sheets_from_db(project_name: str, filename: str, sheets_info: Dict[str, Dict[str, Any]]):
-        """Drops SQLite tables corresponding to indexed sheets of a deleted Excel file."""
-        db_path = ProjectManager.get_db_path(project_name)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+    def sync_to_storage(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
+        """
+        Unified sync: Syncs selected Excel sheets to SQLite and Vector Store.
+        """
+        file_bytes = item["bytes"]
         
-        tables_dropped = []
-        for sheet_name, info in sheets_info.items():
-            if info.get("indexed", False): # Only drop if it was indexed (i.e., present in DB)
-                base_table_name = "FSDM/ETL_" + sheet_name
-                # Apply the same sanitization and prefixing as save_df_to_sql
-                sanitized_base = re.sub(r'[^a-zA-Z0-9_]', '_', base_table_name).lower()
-                if sanitized_base.startswith("t_"): # Check if it already has the prefix from save_df_to_sql
-                    actual_table_name = sanitized_base
-                elif sanitized_base[0].isdigit():
-                    actual_table_name = "t_" + sanitized_base
-                else:
-                    actual_table_name = sanitized_base # Should not happen with FSDM/ETL prefix, but for completeness
-                
-                try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {actual_table_name}")
-                    print(f"Dropped table '{actual_table_name}' for sheet '{sheet_name}' from project '{project_name}'.")
-                    tables_dropped.append(actual_table_name)
-                except sqlite3.Error as e:
-                    print(f"Error dropping table '{actual_table_name}' for sheet '{sheet_name}' in project '{project_name}': {e}")
+        # 1. Sync to DB
+        item = db_service.sync(project_name, item, prefix)
         
-        if tables_dropped:
-            conn.commit()
-            print(f"Dropped tables: {', '.join(tables_dropped)}")
-        else:
-            print(f"No indexed sheets found for file '{filename}' in project '{project_name}' to drop from DB.")
+        # 2. Sync to Vector Store
+        for s_name, s_info in item["sheets"].items():
+            if s_info.get("selected"):
+                if not s_info.get("indexed_vector", False):
+                    vector_service.add_excel_sheet(item["name"], file_bytes, s_name)
+                    s_info["indexed_vector"] = True
+            else:
+                if s_info.get("indexed_vector", False):
+                    vector_service.remove_source(item["name"], s_name)
+                    s_info["indexed_vector"] = False
+        return item
+
+    @staticmethod
+    def cleanup_resources(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
+        """
+        Unified cleanup: Drops SQLite tables and removes from Vector Store for a deleted file.
+        """
+        # Cleanup DB
+        db_service.delete_all_tables_for_item(project_name, item, prefix)
         
-        conn.close()
+        # Cleanup Vector Store
+        for s_name in item["sheets"].keys():
+            vector_service.remove_source(item["name"], s_name)
+        vector_service.remove_source(item["name"])

@@ -6,8 +6,9 @@ from .processors import process_pdf, process_excel_sheets, split_documents
 logger = logging.getLogger(__name__)
 
 class VectorStoreService:
-    def __init__(self, manager: VectorStoreManager):
+    def __init__(self, manager: VectorStoreManager, collection_name: str = "knowledge_base"):
         self.manager = manager
+        self.collection_name = collection_name
 
     def sync_project(self, inventory: List[Dict[str, Any]]):
         """
@@ -23,18 +24,18 @@ class VectorStoreService:
     def _handle_pdf_sync(self, item: Dict[str, Any]):
         name = item["name"]
         selected = item.get("selected", False)
-        indexed = item.get("indexed", False)
+        indexed = item.get("indexed_vector", False)
 
         if selected and not indexed:
-            logger.info(f"Indexing PDF: {name}")
+            logger.info(f"Indexing PDF: {name} in {self.collection_name}")
             docs = process_pdf(item["bytes"], name)
             chunks = split_documents(docs)
-            self.manager.add_documents(chunks)
-            item["indexed"] = True
+            self.manager.add_documents(chunks, collection_name=self.collection_name)
+            item["indexed_vector"] = True
         elif not selected and indexed:
-            logger.info(f"Removing PDF from index: {name}")
-            self.manager.remove_document(name)
-            item["indexed"] = False
+            logger.info(f"Removing PDF from {self.collection_name} index: {name}")
+            self.manager.remove_document(name, collection_name=self.collection_name)
+            item["indexed_vector"] = False
 
     def _handle_excel_sync(self, item: Dict[str, Any]):
         name = item["name"]
@@ -42,31 +43,31 @@ class VectorStoreService:
         
         for sheet_name, info in sheets.items():
             selected = info.get("selected", False)
-            indexed = info.get("indexed", False)
+            indexed = info.get("indexed_vector", False)
 
             if selected and not indexed:
-                logger.info(f"Indexing Excel Sheet: {name} [{sheet_name}]")
+                logger.info(f"Indexing Excel Sheet: {name} [{sheet_name}] in {self.collection_name}")
                 docs = process_excel_sheets(item["bytes"], name, [sheet_name])
                 chunks = split_documents(docs)
-                self.manager.add_documents(chunks)
-                info["indexed"] = True
+                self.manager.add_documents(chunks, collection_name=self.collection_name)
+                info["indexed_vector"] = True
             elif not selected and indexed:
-                logger.info(f"Removing Excel Sheet from index: {name} [{sheet_name}]")
-                self.manager.remove_document(name, sheet_name)
-                info["indexed"] = False
+                logger.info(f"Removing Excel Sheet from {self.collection_name} index: {name} [{sheet_name}]")
+                self.manager.remove_document(name, sheet_name, collection_name=self.collection_name)
+                info["indexed_vector"] = False
 
     def add_pdf(self, name: str, file_bytes: bytes):
         """Manually add a PDF to the vector store."""
         docs = process_pdf(file_bytes, name)
         chunks = split_documents(docs)
-        self.manager.add_documents(chunks)
+        self.manager.add_documents(chunks, collection_name=self.collection_name)
 
     def add_excel_sheet(self, name: str, file_bytes: bytes, sheet_name: str):
         """Manually add an Excel sheet to the vector store."""
         docs = process_excel_sheets(file_bytes, name, [sheet_name])
         chunks = split_documents(docs)
-        self.manager.add_documents(chunks)
+        self.manager.add_documents(chunks, collection_name=self.collection_name)
 
     def remove_source(self, name: str, sheet_name: Optional[str] = None):
         """Remove a source (or specific sheet) from the vector store."""
-        self.manager.remove_document(name, sheet_name)
+        self.manager.remove_document(name, sheet_name, collection_name=self.collection_name)

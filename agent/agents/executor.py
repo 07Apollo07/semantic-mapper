@@ -52,7 +52,7 @@ class AgentExecutor:
         self.state.add_log(message)
         print(message)
 
-    def _get_table_metadata(self) -> str:
+    def _get_fsdm_metadata(self) -> str:
         """Finds and formats metadata for all FSDM tables from the state's inventory."""
         formatted_metadata = ""
         for item in self.state.fsdm_inventory:
@@ -81,7 +81,7 @@ class AgentExecutor:
         # 1. Phase 1: FSDM Lineage Discovery (Detective)
         self._log(f"🕵️ [Detective] Tracing lineage for Row {row_idx} ({source_table})...")
         
-        metadata = self._get_table_metadata()
+        metadata = self._get_fsdm_metadata()
         
         fsdm_inputs = {
             "source_info": source_info,
@@ -174,7 +174,7 @@ class AgentExecutor:
         source_info = row_data.get('source_info', {})
         self._log(f"🕵️ [Detective] Regenerating lineage for Row {row_idx}...")
         
-        metadata = self._get_table_metadata()
+        metadata = self._get_fsdm_metadata()
         fsdm_inputs = {
             "source_info": source_info,
             "target_info": row_data.get('target_info', {}),

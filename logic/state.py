@@ -110,7 +110,8 @@ class AppState:
         vs_path = os.path.join(project_path, "vector_store")
         
         st.session_state.v_manager = VectorStoreManager(persist_directory=vs_path)
-        st.session_state.v_manager.initialize_store()
+        # Force a dummy call to ensure it's initialized and not just a state object
+        st.session_state.v_manager.load_model()
 
     def save_project(self):
         if not self.current_project:
@@ -225,8 +226,12 @@ class AppState:
         return st.session_state.v_manager
 
     @property
-    def v_service(self) -> VectorStoreService:
-        return VectorStoreService(self.v_manager)
+    def semantic_service(self) -> VectorStoreService:
+        return VectorStoreService(self.v_manager, collection_name="semantic")
+
+    @property
+    def fsdm_service(self) -> VectorStoreService:
+        return VectorStoreService(self.v_manager, collection_name="fsdm")
 
     @property
     def results(self) -> List[Dict[str, Any]]:

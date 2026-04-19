@@ -76,7 +76,7 @@ sidebar_config(state)
 st.title("Semantic Mapper AI 🧠")
 
 #  Section 1: Knowledge Base Manager
-st.header("1. Knowledge Base Manager")
+st.header("1.1 Semantic Manager")
 
 #  --- 1. Upload Section ---
 uploaded_files = st.file_uploader("Upload PDFs or Excel Sheets", accept_multiple_files=True, type=["pdf", "xlsx"], key="uploader")
@@ -105,7 +105,7 @@ if uploaded_files:
                     "name": f.name,
                     "type": "excel",
                     "bytes": file_bytes,
-                    "sheets": {s: {"selected": True, "indexed": False} for s in sheets}
+                    "sheets": {s: {"selected": True, "indexed": False, "metadata": ""} for s in sheets}
                 })
     state.kb_inventory = inventory # Trigger update
     state.save_project()
@@ -139,19 +139,27 @@ if state.kb_inventory:
 
             else: # Excel
                 sheets_data = item["sheets"]
-                indexed_count = sum(1 for s in sheets_data.values() if s["indexed"])
+                # Track indexing status based on SQL and Vector presence
+                indexed_sql_count = sum(1 for s in sheets_data.values() if s.get("indexed_sql"))
+                indexed_vec_count = sum(1 for s in sheets_data.values() if s.get("indexed_vector"))
                 selected_count = sum(1 for s in sheets_data.values() if s["selected"])
                 
-                if indexed_count == selected_count and indexed_count > 0:
-                    col_status.success(f"✅ {indexed_count} Sheets")
-                elif indexed_count > 0:
-                    col_status.warning(f"🟠 {indexed_count}/{selected_count} Sync")
-                    needs_sync = True
-                elif selected_count > 0:
-                    col_status.info(f"⏳ {selected_count} Pending")
-                    needs_sync = True
-                
-                if any(s["selected"] != s["indexed"] for s in sheets_data.values()):
+                # Sync needs to happen if selected items are not yet indexed in both
+                needs_sync = any(
+                    s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector")) 
+                    for s in sheets_data.values()
+                )
+                # Also needs sync if previously indexed items were deselected
+                if not needs_sync:
+                     needs_sync = any(
+                        not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
+                        for s in sheets_data.values()
+                    )
+
+                if indexed_sql_count == selected_count and indexed_vec_count == selected_count and selected_count > 0:
+                    col_status.success(f"✅ Synced")
+                elif selected_count > 0 or needs_sync:
+                    col_status.info(f"⏳ Pending")
                     needs_sync = True
 
                 col_name.markdown(f"📊 **{item['name']}**")
@@ -165,8 +173,8 @@ if state.kb_inventory:
                             state.save_project()
                             st.rerun()
 
-                        if s_info.get("indexed_sql"):
-                            s_col2.markdown(":green[In DB]")
+                        if s_info.get("indexed_sql") and s_info.get("indexed_vector"):
+                            s_col2.markdown(":green[✅ In DB/Vec]")
                             s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_semantic_{item['name']}_{s_name}_{idx}", disabled=True)
                             
                             # Metadata Management
@@ -197,7 +205,7 @@ if state.kb_inventory:
                                 st.rerun()
             if col_rm.button("🗑️", key=f"del_file_{idx}"):
                 # Use unified cleanup
-                ProjectManager.cleanup_resources(state.current_project, item, state.v_service, DBService, prefix="semantic_fsdm_")
+                ProjectManager.cleanup_resources(state.current_project, item, state.semantic_service, DBService, prefix="semantic_fsdm_")
                 
                 # Remove from disk
                 ProjectManager.delete_file(state.current_project, item["name"], sub_dir="files/semantic")
@@ -215,7 +223,7 @@ if state.kb_inventory:
             with st.spinner("Syncing to Vector Store and SQLite..."):
                 for idx, item in enumerate(inventory):
                     inventory[idx] = ProjectManager.sync_to_storage(
-                        state.current_project, item, state.v_service, DBService, prefix="semantic_fsdm_"
+                        state.current_project, item, state.semantic_service, DBService, prefix="semantic_fsdm_"
                     )
                 
                 state.kb_inventory = inventory
@@ -231,7 +239,7 @@ if state.kb_inventory:
 st.divider()
 
 #  Section 1.2: Knowledge Base DB Manager
-st.header("1.2 Knowledge Base DB Manager")
+st.header("1.2 ETL Manager")
 
 #  --- 1. Upload Section ---
 fsdm_uploaded_files = st.file_uploader("Upload FSDM/ETL Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="fsdm_uploader")
@@ -267,20 +275,35 @@ if state.fsdm_inventory:
             col_name, col_status, col_rm = st.columns([5, 2, 1])
             
             sheets_data = item["sheets"]
-            indexed_count = sum(1 for s in sheets_data.values() if s["indexed"])
+            # Check for existing sync status in both DB and Vector
+            indexed_sql_count = sum(1 for s in sheets_data.values() if s.get("indexed_sql"))
+            indexed_vec_count = sum(1 for s in sheets_data.values() if s.get("indexed_vector"))
             selected_count = sum(1 for s in sheets_data.values() if s["selected"])
             
-            if indexed_count == selected_count and indexed_count > 0:
-                col_status.success(f"✅ {indexed_count} Tables")
-            elif indexed_count > 0:
-                col_status.warning(f"🟠 {indexed_count}/{selected_count} Sync")
-                needs_db_sync = True
-            elif selected_count > 0:
-                col_status.info(f"⏳ {selected_count} Pending")
+            # Sync needs to happen if selected items are not yet indexed in both
+            needs_db_sync = any(
+                s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector")) 
+                for s in sheets_data.values()
+            )
+            # Also needs sync if previously indexed items were deselected
+            if not needs_db_sync:
+                 needs_db_sync = any(
+                    not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
+                    for s in sheets_data.values()
+                )
+
+            if indexed_sql_count == selected_count and indexed_vec_count == selected_count and selected_count > 0:
+                col_status.success(f"✅ Synced")
+            elif selected_count > 0 or needs_db_sync:
+                col_status.info(f"⏳ Pending")
                 needs_db_sync = True
             
-            if any(s["selected"] != s["indexed"] for s in sheets_data.values()):
-                needs_db_sync = True
+            # Also needs sync if previously indexed items were deselected
+            if not needs_db_sync:
+                 needs_db_sync = any(
+                    not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
+                    for s in sheets_data.values()
+                )
 
             col_name.markdown(f"📊 **{item['name']}**")
             with col_name.expander("Show Sheets"):
@@ -292,8 +315,8 @@ if state.fsdm_inventory:
                         state.fsdm_inventory = fsdm_inventory
                         state.save_project()
                         st.rerun()
-                    if s_info["indexed"]:
-                        s_col2.markdown(":green[In DB]")
+                    if s_info.get("indexed_sql") and s_info.get("indexed_vector"):
+                        s_col2.markdown(":green[✅ In DB/Vec]")
                         s_col3.checkbox("Merge Headers", value=s_info.get("combine_headers", False), key=f"merge_locked_fsdm_{item['name']}_{s_name}_{idx}", disabled=True)
                         
                         # Metadata Management
@@ -304,7 +327,6 @@ if state.fsdm_inventory:
                                 with st.spinner("Analyzing data..."):
                                     table_name = ProjectManager.get_sanitized_table_name("FSDM/ETL_" + s_name)
                                     sample_df = sample_table_data_logic(table_name, state.current_project)
-                                    print(sample_df)
                                     new_meta = generate_metadata(
                                         sample_df, 
                                         state.selected_model, 
@@ -335,7 +357,7 @@ if state.fsdm_inventory:
             
             if col_rm.button("🗑️", key=f"del_fsdm_file_{idx}"):
                 # Use unified cleanup
-                ProjectManager.cleanup_resources(state.current_project, item, state.v_service, DBService, prefix="fsdm_etl_")
+                ProjectManager.cleanup_resources(state.current_project, item, state.fsdm_service, DBService, prefix="fsdm_etl_")
 
                 # Remove from disk
                 ProjectManager.delete_file(state.current_project, item["name"], sub_dir="files/fsdm")
@@ -352,7 +374,7 @@ if state.fsdm_inventory:
             with st.spinner("Syncing to SQLite and Vector Store..."):
                 for idx, item in enumerate(fsdm_inventory):
                     fsdm_inventory[idx] = ProjectManager.sync_to_storage(
-                        state.current_project, item, state.v_service, DBService, prefix="fsdm_etl_"
+                        state.current_project, item, state.fsdm_service, DBService, prefix="fsdm_etl_"
                     )
                 
                 state.fsdm_inventory = fsdm_inventory

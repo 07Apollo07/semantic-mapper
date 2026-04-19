@@ -8,7 +8,7 @@ from agent.tools.tools import (
     lg_get_instructions,
     lg_get_table_schema,
     lg_query_db,
-    lg_list_fsdm_tables_logic
+    lg_list_tables
 )
 
 def should_continue(state: FSDMDiscoveryState):
@@ -34,7 +34,7 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
     )
     
     # Discovery tools
-    tools = [lg_get_table_schema, lg_query_db, lg_list_fsdm_tables_logic]
+    tools = [lg_get_table_schema, lg_query_db, lg_list_tables]
     tool_node = ToolNode(tools)
     model = llm.bind_tools(tools + [FSDMIntentOutput])
 
@@ -46,6 +46,9 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
         target_table = source_info.get('table_name')
         target_col = source_info.get('column_name')
         feedback = state.get('feedback')
+        
+        # Get metadata dynamically from state
+        metadata_context = state.get('metadata', 'No table metadata provided.')
 
         # Use cached prompt if available, otherwise generate, cache, and PRINT it
         if 'system_prompt' not in state:
@@ -54,7 +57,7 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
             fsdm_instr = lg_get_instructions.invoke({"scope": "fsdm", "project_name": project})
 
             # 2. Get list of available mapping tables
-            mapping_tables = lg_list_fsdm_tables_logic.invoke({"project_name": project})
+            mapping_tables = lg_list_tables.invoke({"project_name": project, "table_type": "fsdm"})
 
             feedback_section = f"\n<human_feedback>\n{feedback}\n</human_feedback>\n" if feedback else ""
 
@@ -225,7 +228,7 @@ For EACH pattern in instructions:
 ### Contextual Data
 
 <fsdm_table_metadata>
-{state.get('metadata', 'No table metadata provided.')}
+{metadata_context}
 </fsdm_table_metadata>
 
 

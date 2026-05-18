@@ -85,6 +85,25 @@ def query_db_logic(sql_query: str, project_name: str) -> str:
         return f"Error executing SQL: {str(e)}"
 
 
+def query_full_db_data(sql_query: str, project_name: str) -> str:
+    """
+    Executes a SQL SELECT query against the project database using raw sqlite3.
+    This bypasses LangChain's default result truncation.
+    """
+    db_path = ProjectManager.get_db_path(project_name)
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        rows = cursor.fetchall()
+        headers = [description[0] for description in cursor.description]
+        return f"Headers: {headers}\nRows: {rows}"
+    except Exception as e:
+        return f"Error executing query: {str(e)}"
+    finally:
+        conn.close()
+
+
 def get_table_schema_logic(table_name: str, project_name: str) -> str:
     """
     Returns the CREATE TABLE statement for a specific table.

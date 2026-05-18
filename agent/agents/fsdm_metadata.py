@@ -8,7 +8,7 @@ def generate_metadata(sample_df, model_name, api_key, base_url):
     """
     llm = ChatOpenAI(
         model=model_name,
-        temperature=0.1,
+        # temperature=0.,
         api_key=api_key if api_key and api_key.strip() != "" else "not-needed",
         base_url=f"{base_url.rstrip('/')}/v1" if base_url else None
     )
@@ -19,13 +19,15 @@ def generate_metadata(sample_df, model_name, api_key, base_url):
     # )
     
     prompt = ChatPromptTemplate.from_template(
-        "Analyze the following sample data from a database table:\n\n{sample_data}\n\n"
-        "This is just a subset of sample data, your job is not to infer from the data."
-        "Do not give information about data, just column information. "
-        "Provide a concise text description of the table's purpose and define the role of its columns. "
-        "This description will be used as instructions for an AI agent performing data mapping. "
-        "Focus on clarity and technical accuracy."
-        "This will be used to query a sqlite db, so column name accuracy is very important, do not add extra symbols or characters"
+        "Analyze the provided sample data (which contains ONLY 5 rows of data) from the database table."
+        "Strictly follow these instructions to generate metadata for this table:\n\n"
+        "{sample_data}\n\n"
+        "1. Your ONLY task is to provide a dictionary-like metadata definition for each headers.\n"
+        "2. Do NOT mention any data, values, or content from the rows. This input is only 5 rows of sample data; do not infer anything from the actual data values.\n"
+        "3. Focus solely on defining the purpose and role of each header based on its name from Headers:\n"
+        "4. Output format must be: \"Header name\": Definition.\n"
+        "5. Do NOT rename header names, do not use quotes/brackets around them, and do not modify them in any way. Keep them exactly as provided.\n"
+        "6. Keep definitions simple, concise, and clear.\n"
     )
     
     response = llm.invoke(prompt.format(sample_data=sample_df))

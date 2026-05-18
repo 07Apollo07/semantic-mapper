@@ -218,3 +218,5 @@ __marimo__/
 prompt.md
 projects/
 PROGRESS.md
+test_prompt.py
+agent/agents/mapping_custom.py

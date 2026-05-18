@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 from agent.agents.fsdm_detective import create_fsdm_detective
 # from agent.agents.mapping_engineer import create_mapping_engineer
 from agent.agents.mapping_oneshot import create_mapping_oneshot
+from agent.agents.mapping_custom import create_mapping_custom
 from agent.agents.agents_utils import FSDMDiscoveryState, SemanticMappingState
 from logic.utils import get_cell_value
 from langchain_core.messages import HumanMessage, AIMessage
@@ -260,5 +261,60 @@ class AgentExecutor:
             return mapping_res
         except Exception as e:
             self._log(f"❌ [Engineer] Error: {str(e)}")
+            mapping_res["mapping_status"] = f"Error: {str(e)}"
+            return mapping_res
+
+    def process_mapping_custom(self, row_data: Dict[str, Any], row_idx: int, feedback: Optional[str] = None) -> Dict[str, Any]:
+        """Invokes the Custom Mapping Agent."""
+        llm_config = self.state.get_llm_config()
+        
+        custom_agent = create_mapping_custom(
+            model_name=llm_config["model_name"],
+            api_key=llm_config["api_key"],
+            base_url=llm_config["base_url"],
+            log_callback=self._log
+        )
+        
+        inputs = {
+            "row_data": row_data,
+            "project_name": self.state.current_project,
+            "feedback": feedback
+        }
+        
+        mapping_res = {
+            "row_idx": row_idx,
+            "source_info": row_data.get('source_info', {}),
+            "target_info": row_data.get('target_info', {}),
+            "target_table": row_data.get('target_table', 'unknown_table'),
+            "transformation_specs": row_data.get('transformation_specs', {}),
+            "fsdm_intent": "", # Dummy
+            "fsdm_findings": "", # Dummy
+            "fsdm_reasoning": "", # Dummy
+            "fsdm_recommended_sources": [], # Dummy
+            "fsdm_status": "Not Applicable", # Dummy
+            "mapping_status": "Pending"
+        }
+        
+        try:
+            res = custom_agent.invoke(inputs)
+            last_msg = res['messages'][-1]
+            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                output_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'MappingOutput'), None)
+                if output_call:
+                    args = output_call['args']
+                    mapping_res.update({
+                        "mapping_status": "Complete",
+                        "transformation_type": args.get('transformation_type'),
+                        "transformation_logic": args.get('transformation_logic'),
+                        "reasoning": args.get('reasoning')
+                    })
+                    self._log(f"✅ [Custom Agent] Mapping generated.")
+                    return mapping_res
+            
+            self._log(f"❌ [Custom Agent] No structured output.")
+            mapping_res["mapping_status"] = "Error: Failed to call MappingOutput."
+            return mapping_res
+        except Exception as e:
+            self._log(f"❌ [Custom Agent] Error: {str(e)}")
             mapping_res["mapping_status"] = f"Error: {str(e)}"
             return mapping_res

@@ -184,14 +184,19 @@ if state.kb_inventory:
                                     with st.spinner("Analyzing data..."):
                                         table_name = ProjectManager.get_sanitized_table_name("semantic_fsdm_" + s_name)
                                         sample_df = sample_table_data_logic(table_name, state.current_project)
+                                        print(sample_df)
                                         s_info["metadata"] = generate_metadata(
                                             sample_df, state.selected_model, state.api_key, state.base_url
                                         )
                                         state.save_project()
                                         st.rerun()
                                             
-                                new_val = st.text_area("Table Definitions/Instructions", value=current_meta, key=f"meta_semantic_{item['name']}_{s_name}_{idx}")
-                                if new_val != current_meta:
+                                new_val = st.text_area(
+                                    "Table Definitions/Instructions", 
+                                    value=s_info.get("metadata", ""), 
+                                    key=f"meta_semantic_{item['name']}_{s_name}_{hash(s_info.get('metadata', ''))}_{idx}"
+                                )
+                                if new_val != s_info.get("metadata", ""):
                                     s_info["metadata"] = new_val
                                     state.save_project()
                                     st.rerun()
@@ -327,6 +332,7 @@ if state.fsdm_inventory:
                                 with st.spinner("Analyzing data..."):
                                     table_name = ProjectManager.get_sanitized_table_name("FSDM/ETL_" + s_name)
                                     sample_df = sample_table_data_logic(table_name, state.current_project)
+                                    print(sample_df)
                                     new_meta = generate_metadata(
                                         sample_df, 
                                         state.selected_model, 
@@ -337,6 +343,7 @@ if state.fsdm_inventory:
                                     state.save_project()
                                     st.rerun()
                                     
+                            # Use a key that incorporates the hash of the metadata to force re-render when it changes
                             new_val = st.text_area(
                                 "Table Definitions/Instructions", 
                                 value=current_meta, 
@@ -775,7 +782,7 @@ if state.mapping_active:
                     }
                     
                     executor = AgentExecutor(state)
-                    res = executor.process_row(row_data, r_idx)
+                    res = executor.process_mapping_custom(row_data, r_idx)
                     ProjectManager.save_mapping_row(state.current_project, res)
                     st.write(f"✅ Saved result for {unique_id}")
                 else:

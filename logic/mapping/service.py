@@ -22,22 +22,36 @@ class MappingService:
         
         # Standard columns we always want in the DB for our unified view
         standard_cols = [
+            # Source fields
             "source_subject", "source_db", "source_table", "source_column", "source_type",
+            # Target fields
             "target_subject", "target_db", "target_table", "target_column", "target_type",
+            # Physical source fields
+            "physical_source_subject", "physical_source_db", "physical_source_table", "physical_source_column", "physical_source_type",
+            # Transformation metadata
             "trans_type", "trans_condition", "remarks"
         ]
         
         mapping_map = {
+            # Source fields
             "source_subject": config.source_fields.get("subj"),
             "source_db": config.source_fields.get("db"),
             "source_table": config.source_fields.get("tbl"),
             "source_column": config.source_fields.get("col"),
             "source_type": config.source_fields.get("type"),
+            # Target fields
             "target_subject": config.target_fields.get("subj"),
             "target_db": config.target_fields.get("db"),
             "target_table": config.target_fields.get("tbl"),
             "target_column": config.target_fields.get("col"),
             "target_type": config.target_fields.get("type"),
+            # Physical source fields
+            "physical_source_subject": config.physical_source_fields.get("subj"),
+            "physical_source_db": config.physical_source_fields.get("db"),
+            "physical_source_table": config.physical_source_fields.get("tbl"),
+            "physical_source_column": config.physical_source_fields.get("col"),
+            "physical_source_type": config.physical_source_fields.get("type"),
+            # Transformation metadata
             "trans_type": config.trans_fields.get("type"),
             "trans_condition": config.trans_fields.get("cond"),
             "remarks": config.trans_fields.get("remarks")

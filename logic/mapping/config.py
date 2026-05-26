@@ -14,6 +14,11 @@ class MappingConfig:
     trans_fields: Dict[str, str] = field(default_factory=lambda: {
         "type": "", "cond": "", "remarks": ""
     })
+    
+    # Physical source definition fields, mirroring source_fields structure
+    physical_source_fields: Dict[str, str] = field(default_factory=lambda: {
+        "subj": "", "db": "", "tbl": "", "col": "", "type": ""
+    })
 
     @staticmethod
     def update_inventory(metadata: Dict[str, Any], inventory: List[Dict[str, Any]]) -> Dict[str, Any]:

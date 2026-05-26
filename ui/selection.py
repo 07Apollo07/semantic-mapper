@@ -6,8 +6,9 @@ from logic.state import AppState
 
 def render_mapping_selection(state: AppState):
     """
-    Renders an improved, styled hierarchical selection tree for mapping rows.
-    Includes filtering controls and indicates partial table selection.
+    Renders selection UI based on processing mode:
+    - Row: Hierarchical tree for granular row-level control.
+    - Table: Simplified UI showing only available Target Tables.
     """
     st.markdown("### 🎯 Mapping Selection")
     
@@ -19,13 +20,18 @@ def render_mapping_selection(state: AppState):
 
     df['_unique_id'] = df.apply(lambda r: f"{r['_src_file']}|{r['_src_sheet']}|{r.name}", axis=1)
 
-    # 2. Filtering Controls
+    # 2. Render UI based on Mode
+    if state.processing_mode == "Row":
+        render_row_selection(state, df)
+    elif state.processing_mode == "Table":
+        render_table_selection(state, df)
+
+def render_row_selection(state: AppState, df: pd.DataFrame):
+    # Filtering Controls
     st.markdown("#### 🔍 Filter Selection")
     c1, c2, c3 = st.columns(3)
     
     files = df["_src_file"].unique()
-    
-    # Use session state or persistent properties for filters
     sel_files = c1.multiselect("Filter by File", files, default=state.filter_files if state.filter_files else files)
     state.filter_files = sel_files
     
@@ -44,11 +50,11 @@ def render_mapping_selection(state: AppState):
     df_final = df_filtered[df_filtered["target_table"].isin(sel_tables)]
     state.save_project()
 
-    # 3. State handling
+    # State handling
     selected_ids = set(state.selected_mapping_rows)
     new_selected_ids = set()
 
-    # 4. Render Tree
+    # Render Tree
     for f_name in sel_files:
         f_df = df_final[df_final["_src_file"] == f_name]
         if f_df.empty: continue
@@ -64,7 +70,6 @@ def render_mapping_selection(state: AppState):
                     t_df = s_df[s_df["target_table"] == t_name]
                     t_ids = set(t_df["_unique_id"].tolist())
                     
-                    # Logic for selection states
                     table_selected_ids = t_ids.intersection(selected_ids)
                     is_all_selected = len(table_selected_ids) == len(t_ids)
                     is_partially_selected = 0 < len(table_selected_ids) < len(t_ids)
@@ -72,7 +77,6 @@ def render_mapping_selection(state: AppState):
                     col1, col2 = st.columns([0.05, 0.95])
                     is_t_selected = col1.checkbox(f"sel_tbl_{t_name}", value=is_all_selected, key=f"sel_tbl_{f_name}_{s_name}_{t_name}", label_visibility="collapsed")
                     
-                    # Visual feedback for partial selection
                     indicator = "⚠️" if is_partially_selected else ("✅" if is_all_selected else "🗄️")
                     col2.markdown(f"{indicator} **Target Table:** `{t_name}` — *{len(table_selected_ids)}/{len(t_df)} rows selected*")
                     
@@ -92,18 +96,27 @@ def render_mapping_selection(state: AppState):
 
     # 5. Update
     if set(new_selected_ids) != set(selected_ids):
-        # Sort by row index (the part after the last '|')
         def get_row_idx(unique_id):
             return int(unique_id.split('|')[-1])
         
         sorted_ids = sorted(list(new_selected_ids), key=get_row_idx)
-        print(f"[DEBUG] Selection changed: {len(sorted_ids)} rows.")
         state.selected_mapping_rows = sorted_ids
         state.save_project()
         st.rerun()
 
     st.divider()
     st.success(f"**Total Selected Rows:** {len(state.selected_mapping_rows)}")
+
+def render_table_selection(state: AppState, df: pd.DataFrame):
+    st.markdown("#### 🔍 Select Target Tables")
+    tables = df["target_table"].unique()
+    sel_tables = st.multiselect("Select Tables for Batch Processing", tables, default=state.filter_tables if state.filter_tables else [])
+    state.filter_tables = sel_tables
+    state.save_project()
+    
+    st.success(f"**Total Selected Tables:** {len(sel_tables)}")
+    if sel_tables:
+        st.write("Selected:", ", ".join(sel_tables))
 
 def render_fsdm_discovery_ui(state: AppState):
     """

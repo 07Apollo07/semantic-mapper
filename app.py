@@ -12,6 +12,7 @@ from logic.mapping.config import MappingConfig
 from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
 from agent.agents.executor import AgentExecutor
+from agent.agents.mapping_table_group_agent import mapping_table_group_agent
 from agent.agents.fsdm_metadata import generate_metadata
 from agent.tools.tools import sample_table_data_logic
 from ui import sidebar_config, display_logs, render_mapping_selection, render_fsdm_discovery_ui
@@ -462,9 +463,9 @@ if state.mapping_inventory:
                     with st.expander(f"⚙️ Config for {s_name}"):
                         cfg = s_info["config"]
                         
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.markdown("### Target Fields")
+                            st.markdown("### Target Columns (Semantic)")
                             cfg["target_fields"]["subj"] = st.text_input("Target Subject Area", value=cfg["target_fields"]["subj"], key=f"t_subj_{item['name']}_{s_name}")
                             cfg["target_fields"]["db"] = st.text_input("Target DB Name", value=cfg["target_fields"]["db"], key=f"t_db_{item['name']}_{s_name}")
                             cfg["target_fields"]["tbl"] = st.text_input("Target Table Name", value=cfg["target_fields"]["tbl"], key=f"t_tbl_{item['name']}_{s_name}")
@@ -472,12 +473,24 @@ if state.mapping_inventory:
                             cfg["target_fields"]["type"] = st.text_input("Target Datatype", value=cfg["target_fields"]["type"], key=f"t_type_{item['name']}_{s_name}")
 
                         with col2:
-                            st.markdown("### Source Fields")
+                            st.markdown("### Source Columns (FSDM)")
                             cfg["source_fields"]["subj"] = st.text_input("Subject Area Column", value=cfg["source_fields"]["subj"], key=f"s_subj_{item['name']}_{s_name}")
                             cfg["source_fields"]["db"] = st.text_input("DB Name Column", value=cfg["source_fields"]["db"], key=f"s_db_{item['name']}_{s_name}")
                             cfg["source_fields"]["tbl"] = st.text_input("Table Name Column", value=cfg["source_fields"]["tbl"], key=f"s_tbl_{item['name']}_{s_name}")
                             cfg["source_fields"]["col"] = st.text_input("Column Name Column", value=cfg["source_fields"]["col"], key=f"s_col_{item['name']}_{s_name}")
                             cfg["source_fields"]["type"] = st.text_input("Datatype Column", value=cfg["source_fields"]["type"], key=f"s_type_{item['name']}_{s_name}")
+                        
+                        with col3:
+                            st.markdown("### Physical Source Definitions")
+                            # Add physical source config to cfg if not present
+                            if "physical_source_fields" not in cfg:
+                                cfg["physical_source_fields"] = {"subj": "", "db": "", "tbl": "", "col": "", "type": ""}
+                                
+                            cfg["physical_source_fields"]["subj"] = st.text_input("Phys. Subject Area", value=cfg["physical_source_fields"]["subj"], key=f"p_subj_{item['name']}_{s_name}")
+                            cfg["physical_source_fields"]["db"] = st.text_input("Phys. DB Name", value=cfg["physical_source_fields"]["db"], key=f"p_db_{item['name']}_{s_name}")
+                            cfg["physical_source_fields"]["tbl"] = st.text_input("Phys. Table Name", value=cfg["physical_source_fields"]["tbl"], key=f"p_tbl_{item['name']}_{s_name}")
+                            cfg["physical_source_fields"]["col"] = st.text_input("Phys. Column Name", value=cfg["physical_source_fields"]["col"], key=f"p_col_{item['name']}_{s_name}")
+                            cfg["physical_source_fields"]["type"] = st.text_input("Phys. Datatype", value=cfg["physical_source_fields"]["type"], key=f"p_type_{item['name']}_{s_name}")
                         
                         st.subheader("Transformation Specs")
                         c_tr1, c_tr2, c_tr3, c_tr4 = st.columns(4)
@@ -524,13 +537,21 @@ render_mapping_selection(state)
 
 st.divider()
 col_gen, col_stop = st.columns(2)
-with col_gen:
-    btn_label = f"🚀 Generate SQL Mappings ({len(state.selected_mapping_rows)} rows)" if len(state.selected_mapping_rows) > 0 else "🚀 Generate SQL Mappings"
-    if st.button(btn_label, type="primary", use_container_width=True, disabled=len(state.selected_mapping_rows) == 0 or state.mapping_active):
+
+if state.processing_mode == "Row":
+    btn_label = f"🚀 Generate Row Mappings ({len(state.selected_mapping_rows)} rows)" if len(state.selected_mapping_rows) > 0 else "🚀 Generate Row Mappings"
+    if col_gen.button(btn_label, type="primary", use_container_width=True, disabled=len(state.selected_mapping_rows) == 0 or state.mapping_active):
         state.mapping_active = True
-        state.mapping_idx = 0 # We'll iterate through rows_to_process
+        state.mapping_idx = 0 
         state.save_project()
         st.rerun()
+elif state.processing_mode == "Table":
+    btn_label = f"🚀 Generate Table Mappings ({len(state.filter_tables)} tables)" if len(state.filter_tables) > 0 else "🚀 Generate Table Mappings"
+    if col_gen.button(btn_label, type="primary", use_container_width=True, disabled=len(state.filter_tables) == 0 or state.mapping_active):
+        state.mapping_active = True
+        state.save_project()
+        st.rerun()
+
 with col_stop:
     if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, disabled=not state.mapping_active):
         state.mapping_active = False
@@ -543,171 +564,205 @@ st.divider()
 # Section 3: Results
 st.header("3. Transformation Results")
 
+# Processing Mode Toggle
+mode = st.radio("Processing Mode", ["Row", "Table"], horizontal=True, index=0 if state.processing_mode == "Row" else 1)
+if mode != state.processing_mode:
+    state.processing_mode = mode
+    state.save_project()
+    st.rerun()
+
 # Pull results from DB
-available_tables = ProjectManager.get_unique_target_tables(state.current_project)
-if available_tables:
-    # Use a selectbox to pick which table to view results for
-    selected_view_table = st.selectbox(
-        "Select Target Table to view results", 
-        available_tables, 
-        index=available_tables.index(state.selected_target_table) if state.selected_target_table in available_tables else 0
-    )
-    if selected_view_table != state.selected_target_table:
-        state.selected_target_table = selected_view_table
-        st.rerun()
+if state.processing_mode == "Row":
+    available_tables = ProjectManager.get_unique_target_tables(state.current_project)
+    if available_tables:
+        # Use a selectbox to pick which table to view results for
+        selected_view_table = st.selectbox(
+            "Select Target Table to view results", 
+            available_tables, 
+            index=available_tables.index(state.selected_target_table) if state.selected_target_table in available_tables else 0
+        )
+        if selected_view_table != state.selected_target_table:
+            state.selected_target_table = selected_view_table
+            st.rerun()
 
-    db_results = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
-    # Only show those with logic generated
-    completed_results = [r for r in db_results if r.get('transformation_logic')]
-else:
-    completed_results = []
+        db_results = ProjectManager.get_mappings_by_table(state.current_project, state.selected_target_table)
+        # Only show those with logic generated
+        completed_results = [r for r in db_results if r.get('transformation_logic')]
+    else:
+        completed_results = []
 
-if not completed_results:
-    st.info("No SQL transformations generated yet for this table. Complete Step 2.5 above.")
-else:
-    st.write(f"Showing {len(completed_results)} mappings for `{state.selected_target_table}`.")
+    if not completed_results:
+        st.info("No SQL transformations generated yet for this table. Complete Step 2.5 above.")
+    else:
+        st.write(f"Showing {len(completed_results)} mappings for `{state.selected_target_table}`.")
 
-    for res in completed_results:
-        row_idx = res['row_idx']
-        with st.container(border=True):
-            # Header: Row + Type + SQL
-            col_l, col_r = st.columns([1, 4])
-            with col_l:
-                st.markdown(f"**Row #{row_idx}**")
-                st.caption(f"`{res['transformation_type']}`")
-            
-                # Visual check for verified SQL
-                if res.get('validation_status') == 'SQL Verified':
-                    st.success("Verified")
-                else:
-                    st.info("Draft")
-
-            with col_r:
-                st.code(res['transformation_logic'], language="sql")
-        
-            # Compact Metadata
-            s = res['source_info']
-            t = res['target_info']
-            st.caption(f"**Src:** `{s.get('db_name')}.{s.get('table_name')}.{s.get('column_name')}` | **Tgt:** `{t.get('db_name')}.{t.get('table_name')}.{t.get('column_name')}`")
-
-            # Details Expander
-            with st.expander("Details, Reasoning & Feedback", expanded=False):
-                # 1. FSDM Discovery Intelligence (Phase 1)
-                st.markdown("#### 🧠 Phase 1: FSDM Discovery Intelligence")
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f"**Findings:**\n{res.get('fsdm_findings', 'N/A')}")
-                with c2:
-                    st.markdown(f"**Recommended Sources:**\n`{res.get('fsdm_recommended_sources', 'N/A')}`")
+        for res in completed_results:
+            row_idx = res['row_idx']
+            with st.container(border=True):
+                # Header: Row + Type + SQL
+                col_l, col_r = st.columns([1, 4])
+                with col_l:
+                    st.markdown(f"**Row #{row_idx}**")
+                    st.caption(f"`{res['transformation_type']}`")
                 
-                st.markdown(f"**Discovery Reasoning:**\n{res.get('fsdm_reasoning', 'N/A')}")
-                st.markdown(f"**Discovery Report (Full):**\n{res.get('fsdm_intent', 'N/A')}")
+                    # Visual check for verified SQL
+                    if res.get('validation_status') == 'SQL Verified':
+                        st.success("Verified")
+                    else:
+                        st.info("Draft")
+
+                with col_r:
+                    st.code(res['transformation_logic'], language="sql")
+            
+                # Compact Metadata
+                s = res['source_info']
+                t = res['target_info']
+                st.caption(f"**Src:** `{s.get('db_name')}.{s.get('table_name')}.{s.get('column_name')}` | **Tgt:** `{t.get('db_name')}.{t.get('table_name')}.{t.get('column_name')}`")
+
+                # Details Expander
+                with st.expander("Details, Reasoning & Feedback", expanded=False):
+                    # 1. FSDM Discovery Intelligence (Phase 1)
+                    st.markdown("#### 🧠 Phase 1: FSDM Discovery Intelligence")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**Findings:**\n{res.get('fsdm_findings', 'N/A')}")
+                    with c2:
+                        st.markdown(f"**Recommended Sources:**\n`{res.get('fsdm_recommended_sources', 'N/A')}`")
+                    
+                    st.markdown(f"**Discovery Reasoning:**\n{res.get('fsdm_reasoning', 'N/A')}")
+                    st.markdown(f"**Discovery Report (Full):**\n{res.get('fsdm_intent', 'N/A')}")
+                    
+                    st.divider()
+
+                    # 2. SQL Engineering (Phase 2)
+                    st.markdown("#### ⚙️ Phase 2: SQL Engineering")
+                    st.markdown(f"**Mapping Reasoning:**\n{res.get('reasoning', 'N/A')}")
                 
-                st.divider()
+                    # SQL Verification Toggle
+                    current_v_status = res.get('validation_status', 'Mapping Complete')
+                    sql_is_verified = st.toggle("Verify SQL (Golden Example)", value=(current_v_status == 'SQL Verified'), key=f"sql_v_{row_idx}")
+                
+                    if sql_is_verified and current_v_status != 'SQL Verified':
+                        ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": "SQL Verified"})
+                        st.rerun()
+                    elif not sql_is_verified and current_v_status == 'SQL Verified':
+                        ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": "Mapping Complete"})
+                        st.rerun()
 
-                # 2. SQL Engineering (Phase 2)
-                st.markdown("#### ⚙️ Phase 2: SQL Engineering")
-                st.markdown(f"**Mapping Reasoning:**\n{res.get('reasoning', 'N/A')}")
-            
-                # SQL Verification Toggle
-                current_v_status = res.get('validation_status', 'Mapping Complete')
-                sql_is_verified = st.toggle("Verify SQL (Golden Example)", value=(current_v_status == 'SQL Verified'), key=f"sql_v_{row_idx}")
-            
-                if sql_is_verified and current_v_status != 'SQL Verified':
-                    ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": "SQL Verified"})
-                    st.rerun()
-                elif not sql_is_verified and current_v_status == 'SQL Verified':
-                    ProjectManager.update_mapping_validation(state.current_project, row_idx, {"validation_status": "Mapping Complete"})
-                    st.rerun()
+                    feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}", disabled=sql_is_verified)
+                
+                    def on_regen_fsdm(idx, row_data):
+                        feed = st.session_state.get(f"feed_{idx}", "")
+                        state.sync()
+                        with st.spinner(f"Regenerating FSDM for row {idx}..."):
+                            executor = AgentExecutor(state)
+                            new_fsdm = executor.process_fsdm_only(row_data, idx, feedback=feed)
+                            # Update DB with new FSDM intent
+                            ProjectManager.update_mapping_row(state.current_project, idx, {
+                                "fsdm_intent": new_fsdm.get("fsdm_intent", {}).get("lineage_intent", ""),
+                                "fsdm_findings": new_fsdm.get("fsdm_intent", {}).get("findings", ""),
+                                "fsdm_reasoning": new_fsdm.get("fsdm_intent", {}).get("reasoning", ""),
+                                "fsdm_recommended_sources": new_fsdm.get("fsdm_intent", {}).get("recommended_sources", []),
+                                "fsdm_status": new_fsdm.get("fsdm_status")
+                            })
 
-                feedback = st.text_area("Feedback", value=st.session_state.get(f"feed_{row_idx}", ""), key=f"feed_{row_idx}", disabled=sql_is_verified)
-            
-                def on_regen_fsdm(idx, row_data):
-                    feed = st.session_state.get(f"feed_{idx}", "")
-                    state.sync()
-                    with st.spinner(f"Regenerating FSDM for row {idx}..."):
-                        executor = AgentExecutor(state)
-                        new_fsdm = executor.process_fsdm_only(row_data, idx, feedback=feed)
-                        # Update DB with new FSDM intent
-                        ProjectManager.update_mapping_row(state.current_project, idx, {
-                            "fsdm_intent": new_fsdm.get("fsdm_intent", {}).get("lineage_intent", ""),
-                            "fsdm_findings": new_fsdm.get("fsdm_intent", {}).get("findings", ""),
-                            "fsdm_reasoning": new_fsdm.get("fsdm_intent", {}).get("reasoning", ""),
-                            "fsdm_recommended_sources": new_fsdm.get("fsdm_intent", {}).get("recommended_sources", []),
-                            "fsdm_status": new_fsdm.get("fsdm_status")
+                    def on_regen_sql(idx, row_data):
+                        feed = st.session_state.get(f"feed_{idx}", "")
+                        state.sync()
+                        with st.spinner(f"Regenerating SQL for row {idx}..."):
+                            executor = AgentExecutor(state)
+                            # We need to make sure row_data has the latest fsdm_intent from DB
+                            latest_row = ProjectManager.get_mapping_by_row(state.current_project, idx)
+                            row_data['fsdm_intent'] = {
+                                "lineage_intent": latest_row.get('fsdm_intent'),
+                                "findings": latest_row.get('fsdm_findings'),
+                                "reasoning": latest_row.get('fsdm_reasoning'),
+                                "recommended_sources": latest_row.get('fsdm_recommended_sources') or []
+                            }
+                            new_res = executor.process_mapping_only(row_data, idx, feedback=feed)
+                            ProjectManager.update_mapping_row(state.current_project, idx, new_res)
+                
+                    c_btn1, c_btn2 = st.columns(2)
+                    if c_btn1.button("🔄 Regenerate FSDM", key=f"btn_fsdm_{row_idx}", on_click=on_regen_fsdm, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
+                        st.rerun()
+                    if c_btn2.button("⚙️ Regenerate SQL", key=f"btn_sql_{row_idx}", on_click=on_regen_sql, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
+                        st.rerun()
+
+        # Export all tables from DB
+        if st.button("📦 Export All Processed Tables to Excel", width='stretch'):
+            all_db_data = []
+            unique_tables = ProjectManager.get_unique_target_tables(state.current_project)
+            for tbl in unique_tables:
+                tbl_mappings = ProjectManager.get_mappings_by_table(state.current_project, tbl)
+                for m in tbl_mappings:
+                    if m.get('transformation_logic'):
+                        s = m['source_info']
+                        t = m['target_info']
+                        all_db_data.append({
+                            "Target Table": m['target_table'],
+                            "Row": m['row_idx'],
+                            "Source Subject Area": s.get('subject_area'),
+                            "Source DB Name": s.get('db_name'),
+                            "Source Table Name": s.get('table_name'),
+                            "Source Column Name": s.get('column_name'),
+                            "Source Datatype": s.get('datatype'),
+                            "Target Subject Area": t.get('subject_area'),
+                            "Target DB Name": t.get('db_name'),
+                            "Target Table Name": t.get('table_name'),
+                            "Target Column Name": t.get('column_name'),
+                            "Target Datatype": t.get('datatype'),
+                            "Transformation Type": m['transformation_type'],
+                            "Transformation Logic": m['transformation_logic'],
+                            "SQL Reasoning": m['reasoning'],
+                            "FSDM Findings": m.get('fsdm_findings'),
+                            "FSDM Reasoning": m.get('fsdm_reasoning'),
+                            "FSDM Recommended Sources": m.get('fsdm_recommended_sources'),
+                            "FSDM Full Intent": m.get('fsdm_intent')
                         })
-
-                def on_regen_sql(idx, row_data):
-                    feed = st.session_state.get(f"feed_{idx}", "")
-                    state.sync()
-                    with st.spinner(f"Regenerating SQL for row {idx}..."):
-                        executor = AgentExecutor(state)
-                        # We need to make sure row_data has the latest fsdm_intent from DB
-                        latest_row = ProjectManager.get_mapping_by_row(state.current_project, idx)
-                        row_data['fsdm_intent'] = {
-                            "lineage_intent": latest_row.get('fsdm_intent'),
-                            "findings": latest_row.get('fsdm_findings'),
-                            "reasoning": latest_row.get('fsdm_reasoning'),
-                            "recommended_sources": latest_row.get('fsdm_recommended_sources') or []
-                        }
-                        new_res = executor.process_mapping_only(row_data, idx, feedback=feed)
-                        ProjectManager.update_mapping_row(state.current_project, idx, new_res)
-            
-                c_btn1, c_btn2 = st.columns(2)
-                if c_btn1.button("🔄 Regenerate FSDM", key=f"btn_fsdm_{row_idx}", on_click=on_regen_fsdm, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
-                    st.rerun()
-                if c_btn2.button("⚙️ Regenerate SQL", key=f"btn_sql_{row_idx}", on_click=on_regen_sql, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
-                    st.rerun()
-
-    # Export all tables from DB
-    if st.button("📦 Export All Processed Tables to Excel", width='stretch'):
-        all_db_data = []
-        unique_tables = ProjectManager.get_unique_target_tables(state.current_project)
-        for tbl in unique_tables:
-            tbl_mappings = ProjectManager.get_mappings_by_table(state.current_project, tbl)
-            for m in tbl_mappings:
-                if m.get('transformation_logic'):
-                    s = m['source_info']
-                    t = m['target_info']
-                    all_db_data.append({
-                        "Target Table": m['target_table'],
-                        "Row": m['row_idx'],
-                        "Source Subject Area": s.get('subject_area'),
-                        "Source DB Name": s.get('db_name'),
-                        "Source Table Name": s.get('table_name'),
-                        "Source Column Name": s.get('column_name'),
-                        "Source Datatype": s.get('datatype'),
-                        "Target Subject Area": t.get('subject_area'),
-                        "Target DB Name": t.get('db_name'),
-                        "Target Table Name": t.get('table_name'),
-                        "Target Column Name": t.get('column_name'),
-                        "Target Datatype": t.get('datatype'),
-                        "Transformation Type": m['transformation_type'],
-                        "Transformation Logic": m['transformation_logic'],
-                        "SQL Reasoning": m['reasoning'],
-                        "FSDM Findings": m.get('fsdm_findings'),
-                        "FSDM Reasoning": m.get('fsdm_reasoning'),
-                        "FSDM Recommended Sources": m.get('fsdm_recommended_sources'),
-                        "FSDM Full Intent": m.get('fsdm_intent')
-                    })
-    
-        if all_db_data:
-            final_df = pd.DataFrame(all_db_data)
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                final_df.to_excel(writer, index=False, sheet_name='Semantic Mappings')
         
-            st.download_button(
-                label="Download Final Mappings (Excel) 📥",
-                data=buffer.getvalue(),
-                file_name="semantic_mapping_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width='stretch',
-                type="primary"
-            )
-        else:
-            st.warning("No completed mappings found to export.")
+            if all_db_data:
+                final_df = pd.DataFrame(all_db_data)
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    final_df.to_excel(writer, index=False, sheet_name='Semantic Mappings')
+            
+                st.download_button(
+                    label="Download Final Mappings (Excel) 📥",
+                    data=buffer.getvalue(),
+                    file_name="semantic_mapping_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width='stretch',
+                    type="primary"
+                )
+            else:
+                st.warning("No completed mappings found to export.")
 
+elif state.processing_mode == "Table":
+    st.write("### 📊 Table-Level Mappings")
+    
+    table_results = ProjectManager.get_all_batch_mappings(state.current_project)
+
+    if table_results:
+        for res in table_results:
+            table_id = res['table_id']
+            with st.container(border=True):
+                # Header: Table + Type + SQL
+                col_l, col_r = st.columns([1, 4])
+                with col_l:
+                    st.markdown(f"**Table:** `{res['target_table']}`")
+                    st.caption(f"ID: `{table_id}`")
+                    st.caption(f"`{res['transformation_type']}`")
+                    st.info(f"{res['mapping_status']}")
+
+                with col_r:
+                    st.code(res['transformation_logic'], language="sql")
+                
+                # Details Expander
+                with st.expander("Details & Reasoning", expanded=False):
+                    st.markdown("#### ⚙️ Batch SQL Engineering")
+                    st.markdown(f"**Mapping Reasoning:**\n{res.get('reasoning', 'N/A')}")
+    else:
+        st.info("No table-level transformations generated yet.")
 st.divider()
 
 # Section 4: Logs
@@ -716,87 +771,115 @@ display_logs(state, height=400, key_prefix="main_logs")
 
 # # --- Mapping Execution Loop (State Machine) ---
 if state.mapping_active:
-    # Stop Button
-    if st.button("🛑 Stop Mapping", type="secondary", use_container_width=True, key="stop_mapping_bottom"):
-        state.mapping_active = False
-        state.save_project()
-        st.session_state["mapping_idx"] = 0
-        st.rerun()
-
-    # Track progress index
-    if "mapping_idx" not in st.session_state:
-        st.session_state["mapping_idx"] = 0
-    
-    selected_ids = state.selected_mapping_rows
-    total_rows = len(selected_ids)
-
-    if total_rows == 0:
-        st.warning("No rows selected.")
-        state.mapping_active = False
-        st.rerun()
-
-    if st.session_state["mapping_idx"] < total_rows:
-        unique_id = selected_ids[st.session_state["mapping_idx"]]
+    if state.processing_mode == "Row":
+        # Track progress index
+        if "mapping_idx" not in st.session_state:
+            st.session_state["mapping_idx"] = 0
         
-        # Display progress
-        st.progress((st.session_state["mapping_idx"]) / total_rows)
-        st.info(f"Processing ({st.session_state['mapping_idx'] + 1}/{total_rows}): {unique_id}")
-        
-        # Fetch actual row data from unified_mapping_view
-        unified_df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
-        if not unified_df.empty:
-            try:
-                parts = unique_id.split("|")
-                if len(parts) == 3:
-                    f_name, s_name, r_idx_str = parts
-                    r_idx = int(r_idx_str)
-                    
-                    row_data_raw = unified_df.loc[r_idx]
-                    
-                    target_table = row_data_raw.get('target_table', 'unknown_table')
-                    target_col = row_data_raw.get('target_column', 'unknown_col')
-                    source_table = row_data_raw.get('source_table', 'unknown_table')
-                    source_col = row_data_raw.get('source_column', 'unknown_col')
-                    
-                    row_data = {
-                        "source_info": {
-                            "subject_area": row_data_raw.get("source_subject"),
-                            "db_name": row_data_raw.get("source_db"),
-                            "table_name": source_table,
-                            "column_name": source_col,
-                            "datatype": row_data_raw.get("source_type")
-                        },
-                        "target_info": {
-                            "subject_area": row_data_raw.get("target_subject"),
-                            "db_name": row_data_raw.get("target_db"),
-                            "table_name": target_table,
-                            "column_name": target_col,
-                            "datatype": row_data_raw.get("target_type")
-                        },
-                        "transformation_specs": {
-                            "type": row_data_raw.get("trans_type"),
-                            "condition": row_data_raw.get("trans_condition"),
-                            "remarks": row_data_raw.get("remarks")
-                        },
-                        "target_table": target_table
-                    }
-                    
-                    executor = AgentExecutor(state)
-                    res = executor.process_mapping_custom(row_data, r_idx)
-                    ProjectManager.save_mapping_row(state.current_project, res)
-                    st.write(f"✅ Saved result for {unique_id}")
-                else:
-                    st.error(f"Invalid unique_id format: {unique_id}")
-            except Exception as e:
-                st.error(f"Error processing row {unique_id}: {e}")
-        
-        st.session_state["mapping_idx"] += 1
-        st.rerun()
-    else:
-        # Completion
-        st.success("Mapping complete!")
-        state.mapping_active = False
-        st.session_state["mapping_idx"] = 0
-        state.save_project()
-        st.rerun()
+        selected_ids = state.selected_mapping_rows
+        total_rows = len(selected_ids)
+
+        if total_rows == 0:
+            st.warning("No rows selected.")
+            state.mapping_active = False
+            st.rerun()
+
+        if st.session_state["mapping_idx"] < total_rows:
+            unique_id = selected_ids[st.session_state["mapping_idx"]]
+            
+            # Display progress
+            st.progress((st.session_state["mapping_idx"]) / total_rows)
+            st.info(f"Processing ({st.session_state['mapping_idx'] + 1}/{total_rows}): {unique_id}")
+            
+            # Fetch actual row data from unified_mapping_view
+            unified_df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
+            if not unified_df.empty:
+                try:
+                    parts = unique_id.split("|")
+                    if len(parts) == 3:
+                        f_name, s_name, r_idx_str = parts
+                        r_idx = int(r_idx_str)
+                        
+                        row_data_raw = unified_df.loc[r_idx]
+                        
+                        target_table = row_data_raw.get('target_table', 'unknown_table')
+                        target_col = row_data_raw.get('target_column', 'unknown_col')
+                        source_table = row_data_raw.get('source_table', 'unknown_table')
+                        source_col = row_data_raw.get('source_column', 'unknown_col')
+                        
+                        row_data = {
+                            "source_info": {
+                                "subject_area": row_data_raw.get("source_subject"),
+                                "db_name": row_data_raw.get("source_db"),
+                                "table_name": source_table,
+                                "column_name": source_col,
+                                "datatype": row_data_raw.get("source_type")
+                            },
+                            "target_info": {
+                                "subject_area": row_data_raw.get("target_subject"),
+                                "db_name": row_data_raw.get("target_db"),
+                                "table_name": target_table,
+                                "column_name": target_col,
+                                "datatype": row_data_raw.get("target_type")
+                            },
+                            "physical_source_info": {
+                                "subject_area": row_data_raw.get("physical_source_subject"),
+                                "db_name": row_data_raw.get("physical_source_db"),
+                                "table_name": row_data_raw.get("physical_source_table"),
+                                "column_name": row_data_raw.get("physical_source_column"),
+                                "datatype": row_data_raw.get("physical_source_type")
+                            },
+                            "transformation_specs": {
+                                "type": row_data_raw.get("trans_type"),
+                                "condition": row_data_raw.get("trans_condition"),
+                                "remarks": row_data_raw.get("remarks")
+                            },
+                            "target_table": target_table
+                        }
+                        
+                        executor = AgentExecutor(state)
+                        res = executor.process_mapping_custom(row_data, r_idx)
+                        ProjectManager.save_mapping_row(state.current_project, res)
+                        st.write(f"✅ Saved result for {unique_id}")
+                    else:
+                        st.error(f"Invalid unique_id format: {unique_id}")
+                except Exception as e:
+                    st.error(f"Error processing row {unique_id}: {e}")
+            
+            st.session_state["mapping_idx"] += 1
+            st.rerun()
+        else:
+            # Completion
+            st.success("Row mapping complete!")
+            state.mapping_active = False
+            st.session_state["mapping_idx"] = 0
+            state.save_project()
+            st.rerun()
+
+    elif state.processing_mode == "Table":
+        # Table Batch Processing Logic
+        with st.spinner("Processing selected tables..."):
+            unified_df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
+            
+            for table_name in state.filter_tables:
+                table_df = unified_df[unified_df['target_table'] == table_name]
+                
+                # Convert aggregated table data into a list of row dicts
+                table_data = table_df.to_dict('records')
+                
+                # Mock result for now (Agent call pending)
+                result = {
+                    'target_table': table_name,
+                    'mapping_status': 'Completed',
+                    'transformation_type': 'Batch',
+                    'transformation_logic': '-- Placeholder logic for table ' + table_name,
+                    'reasoning': 'Generated via batch table processor.'
+                }
+                
+                ProjectManager.save_batch_table_mapping(state.current_project, table_name, result)
+            
+            st.success("Table batch processing complete!")
+            state.mapping_active = False
+            state.save_project()
+            st.rerun()
 

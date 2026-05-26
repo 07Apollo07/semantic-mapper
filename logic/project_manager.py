@@ -130,12 +130,25 @@ class ProjectManager:
                 target_table TEXT,
                 source_info TEXT,
                 target_info TEXT,
+                physical_source_info TEXT,
                 transformation_specs TEXT,
                 fsdm_intent TEXT,
                 fsdm_findings TEXT,
                 fsdm_reasoning TEXT,
                 fsdm_recommended_sources TEXT,
                 fsdm_status TEXT,
+                mapping_status TEXT,
+                transformation_type TEXT,
+                transformation_logic TEXT,
+                reasoning TEXT
+            )
+        """)
+
+        # Create final_mappings_table for batch processing
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS final_mappings_table (
+                table_id TEXT PRIMARY KEY,
+                target_table TEXT,
                 mapping_status TEXT,
                 transformation_type TEXT,
                 transformation_logic TEXT,
@@ -452,3 +465,44 @@ class ProjectManager:
         for s_name in item["sheets"].keys():
             vector_service.remove_source(item["name"], s_name)
         vector_service.remove_source(item["name"])
+
+    @staticmethod
+    def get_all_batch_mappings(project_name: str) -> List[Dict[str, Any]]:
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return []
+            
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM final_mappings_table")
+        rows = cursor.fetchall()
+        
+        results = [dict(row) for row in rows]
+        conn.close()
+        return results
+
+    @staticmethod
+    def save_batch_table_mapping(project_name: str, table_id: str, result_data: Dict[str, Any]):
+        import sqlite3
+        import json
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT OR REPLACE INTO final_mappings_table (
+                table_id, target_table, mapping_status, transformation_type, transformation_logic, reasoning
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            table_id,
+            result_data.get('target_table'),
+            result_data.get('mapping_status', 'Completed'),
+            result_data.get('transformation_type'),
+            result_data.get('transformation_logic'),
+            result_data.get('reasoning')
+        ))
+        conn.commit()
+        conn.close()

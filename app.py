@@ -12,7 +12,6 @@ from logic.mapping.config import MappingConfig
 from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
 from agent.agents.executor import AgentExecutor
-from agent.agents.mapping_table_group_agent import mapping_table_group_agent
 from agent.agents.fsdm_metadata import generate_metadata
 from agent.tools.tools import sample_table_data_logic
 from ui import sidebar_config, display_logs, render_mapping_selection, render_fsdm_discovery_ui
@@ -861,21 +860,17 @@ if state.mapping_active:
         with st.spinner("Processing selected tables..."):
             unified_df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")
             
+            executor = AgentExecutor(state)
             for table_name in state.filter_tables:
                 table_df = unified_df[unified_df['target_table'] == table_name]
                 
-                # Convert aggregated table data into a list of row dicts
+                # Convert aggregated table data into a list of row dicts (same shape as row‑level payload)
                 table_data = table_df.to_dict('records')
                 
-                # Mock result for now (Agent call pending)
-                result = {
-                    'target_table': table_name,
-                    'mapping_status': 'Completed',
-                    'transformation_type': 'Batch',
-                    'transformation_logic': '-- Placeholder logic for table ' + table_name,
-                    'reasoning': 'Generated via batch table processor.'
-                }
+                # Run batch agent via executor
+                result = executor.process_table_group(table_name, table_data)
                 
+                # The executor already persists the batch result, but we keep this call for safety
                 ProjectManager.save_batch_table_mapping(state.current_project, table_name, result)
             
             st.success("Table batch processing complete!")

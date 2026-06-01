@@ -7,6 +7,7 @@ from agent.agents.Temp.mapping_custom import create_mapping_custom
 from agent.agents.agents_utils import FSDMDiscoveryState, SemanticMappingState
 from logic.utils import get_cell_value
 from langchain_core.messages import HumanMessage, AIMessage
+from agent.agents.mapping_table_group_agent import create_mapping_table_group
 
 class AgentExecutor:
     """
@@ -318,3 +319,69 @@ class AgentExecutor:
             self._log(f"❌ [Custom Agent] Error: {str(e)}")
             mapping_res["mapping_status"] = f"Error: {str(e)}"
             return mapping_res
+
+# New method for batch table‑level processing
+    def process_table_group(self, table_name: str, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Process an entire table in batch using the custom mapping agent.
+
+        Mirrors the structure of ``process_mapping_custom`` but operates on a list of rows.
+        Steps:
+        1. Create the custom mapping agent with the current LLM configuration.
+        2. Build the ``inputs`` dictionary expected by the agent.
+        3. Invoke the agent inside a ``try/except`` block.
+        4. Extract the ``MappingOutput`` tool call from the AIMessage.
+        5. Populate ``mapping_res`` with the returned fields and set ``mapping_status``.
+        6. Return ``mapping_res`` (the caller will persist it).
+        """
+        # 1. Create the custom mapping agent
+        llm_config = self.state.get_llm_config()
+        custom_agent = create_mapping_table_group(
+            model_name=llm_config["model_name"],
+            api_key=llm_config["api_key"],
+            base_url=llm_config["base_url"],
+            log_callback=self._log
+        )
+        
+        # 2. Prepare inputs – we pass the whole list of rows as ``row_data``
+        inputs = {
+            "row_data": rows,
+            "project_name": self.state.current_project,
+            "feedback": None
+        }
+        
+        # 3. Base result template (similar to row‑level mapping_res)
+        mapping_res = {
+            "target_table": table_name,
+            "mapping_status": "Pending",
+            "transformation_type": "",
+            "transformation_logic": "",
+            "reasoning": "",
+            "rows": rows
+        }
+        
+        try:
+            res = custom_agent.invoke(inputs)
+            last_msg = res['messages'][-1]
+            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                output_call = next((tc for tc in last_msg.tool_calls if tc['name'] == 'MappingOutput'), None)
+                if output_call:
+                    args = output_call['args']
+                    mapping_res.update({
+                        "mapping_status": "Complete",
+                        "transformation_type": args.get('transformation_type'),
+                        "transformation_logic": args.get('transformation_logic'),
+                        "reasoning": args.get('reasoning')
+                    })
+                    self._log(f"✅ [TableGroup] Custom agent succeeded for table '{table_name}'.")
+                else:
+                    self._log(f"⚠️ [TableGroup] No MappingOutput tool call returned.")
+                    mapping_res["mapping_status"] = "Error: No MappingOutput"
+            else:
+                self._log(f"❌ [TableGroup] Unexpected agent response for table '{table_name}'.")
+                mapping_res["mapping_status"] = "Error: Unexpected response"
+        except Exception as e:
+            self._log(f"❌ [TableGroup] Agent invocation error for table '{table_name}': {str(e)}")
+            mapping_res["mapping_status"] = f"Error: {str(e)}"
+        
+        # 6. Return the populated result (caller persists it)
+        return mapping_res

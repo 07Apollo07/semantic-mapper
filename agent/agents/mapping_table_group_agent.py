@@ -141,7 +141,7 @@ def create_mapping_table_group(model_name="gpt-4o", api_key=None, base_url=None,
 
     llm = ChatOpenAI(
         model=model_name,
-        # temperature=0,
+        temperature=0.2,
         api_key=api_key if api_key and api_key.strip() != "" else "not-needed",
         base_url=f"{base_url.rstrip('/')}/v1" if base_url else None
     )
@@ -182,6 +182,7 @@ Includes all joins, filters, derived-table logic, and calculations exactly as wr
 Use qualify row and coalasce whereever applicable
 Start the sql with - CREATE VOLATILE TABLE
 SQL should be easy to read and understand
+Make subqueries and the final output subquery should be at the end
 Do not say you can't do it.
 
 reasoning - should be in bullet points, keep it short 

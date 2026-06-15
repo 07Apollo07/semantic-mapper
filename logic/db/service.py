@@ -93,3 +93,18 @@ class DBService:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def drop_view(project_name: str, view_name: str) -> None:
+        """Drops a SQLite view if it exists.
+
+        This mirrors the ``DROP VIEW IF EXISTS`` logic that was previously
+        inlined in ``app.py`` but centralises it in ``DBService`` so that all
+        database‑modifying operations go through a single, well‑tested utility.
+        """
+        db_path = ProjectManager.get_db_path(project_name)
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute(f"DROP VIEW IF EXISTS {view_name}")
+        conn.commit()
+        conn.close()
+

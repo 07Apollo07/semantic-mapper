@@ -105,7 +105,7 @@ if uploaded_files:
                     "name": f.name,
                     "type": "excel",
                     "bytes": file_bytes,
-                    "sheets": {s: {"selected": True, "indexed": False, "metadata": ""} for s in sheets}
+                    "sheets": {s: {"selected": True, "indexed_sql": False, "indexed_vector": False, "metadata": ""} for s in sheets}
                 })
     state.kb_inventory = inventory # Trigger update
     state.save_project()
@@ -142,25 +142,27 @@ if state.kb_inventory:
                 # Track indexing status based on SQL and Vector presence
                 indexed_sql_count = sum(1 for s in sheets_data.values() if s.get("indexed_sql"))
                 indexed_vec_count = sum(1 for s in sheets_data.values() if s.get("indexed_vector"))
-                selected_count = sum(1 for s in sheets_data.values() if s["selected"])
-                
-                # Sync needs to happen if selected items are not yet indexed in both
-                needs_sync = any(
-                    s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector")) 
+                selected_count = sum(1 for s in sheets_data.values() if s["selected"]) 
+
+                # Determine if THIS Excel file needs syncing
+                excel_needs_sync = any(
+                    s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector"))
                     for s in sheets_data.values()
                 )
-                # Also needs sync if previously indexed items were deselected
-                if not needs_sync:
-                     needs_sync = any(
+                # Also sync if previously indexed items were deselected
+                if not excel_needs_sync:
+                    excel_needs_sync = any(
                         not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
                         for s in sheets_data.values()
                     )
 
+                # Accumulate into the global flag (do NOT overwrite previous value)
+                needs_sync = needs_sync or excel_needs_sync
+
                 if indexed_sql_count == selected_count and indexed_vec_count == selected_count and selected_count > 0:
                     col_status.success(f"✅ Synced")
-                elif selected_count > 0 or needs_sync:
+                elif selected_count > 0 or excel_needs_sync:
                     col_status.info(f"⏳ Pending")
-                    needs_sync = True
 
                 col_name.markdown(f"📊 **{item['name']}**")
                 with col_name.expander("Show Sheets"):
@@ -186,7 +188,10 @@ if state.kb_inventory:
                                         sample_df = sample_table_data_logic(table_name, state.current_project)
                                         print(sample_df)
                                         s_info["metadata"] = generate_metadata(
-                                            sample_df, state.selected_model, state.api_key, state.base_url
+                                            sample_df, 
+                                            state.selected_model, 
+                                            state.api_key, 
+                                            state.base_url
                                         )
                                         state.save_project()
                                         st.rerun()
@@ -222,9 +227,9 @@ if state.kb_inventory:
         st.divider()
 
     # --- 3. Action Buttons ---
-    col_btn1, col_btn2 = st.columns([1, 1])
+    # col_btn1, col_btn2 = st.columns([1, 1])
     if needs_sync:
-        if col_btn1.button("🔄 Sync with Vector & DB", type="primary", width='stretch'):
+        if st.button("🔄 Sync with Vector & DB", type="primary", width='stretch'):
             with st.spinner("Syncing to Vector Store and SQLite..."):
                 for idx, item in enumerate(inventory):
                     inventory[idx] = ProjectManager.sync_to_storage(
@@ -236,18 +241,18 @@ if state.kb_inventory:
                 st.success("Vector Store & DB updated!")
                 st.rerun()
     
-    if col_btn2.button("🧹 Clear All", width='stretch'):
-        state.reset_kb()
-        state.save_project()
-        st.rerun()
+    # if col_btn2.button("🧹 Clear All", width='stretch'):
+    #     state.reset_kb()
+    #     state.save_project()
+    #     st.rerun()
 
-st.divider()
+# st.divider()
 
 #  Section 1.2: Knowledge Base DB Manager
 st.header("1.2 ETL Manager")
 
 #  --- 1. Upload Section ---
-fsdm_uploaded_files = st.file_uploader("Upload FSDM/ETL Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="fsdm_uploader")
+fsdm_uploaded_files = st.file_uploader("Upload FSDM/ETL Excel Sheets", accept_multiple_files=True, type=["pdf", "xlsx"], key="fsdm_uploader")
 
 if fsdm_uploaded_files:
     fsdm_inventory = state.fsdm_inventory
@@ -259,19 +264,28 @@ if fsdm_uploaded_files:
             # Save to disk
             ProjectManager.save_file(state.current_project, f.name, file_bytes, sub_dir="files/fsdm")
             
-            sheets = get_excel_sheets(file_bytes)
-            fsdm_inventory.append({
-                "name": f.name,
-                "type": "excel",
-                "bytes": file_bytes,
-                "sheets": {s: {"selected": True, "indexed": False, "metadata": ""} for s in sheets}
-            })
+            if f.name.endswith(".pdf"):
+                fsdm_inventory.append({
+                    "name": f.name,
+                    "type": "pdf",
+                    "bytes": file_bytes,
+                    "selected": True, 
+                    "indexed": False  
+                })
+            elif f.name.endswith(".xlsx"):
+                sheets = get_excel_sheets(file_bytes)
+                fsdm_inventory.append({
+                    "name": f.name,
+                    "type": "excel",
+                    "bytes": file_bytes,
+                    "sheets": {s: {"selected": True, "indexed_sql": False, "indexed_vector": False, "metadata": ""} for s in sheets}
+                })
     state.fsdm_inventory = fsdm_inventory # Trigger update
     state.save_project()
 
 #  --- 2. Dashboard Section ---
 if state.fsdm_inventory:
-    st.subheader("Manage DB Documents")
+    st.subheader("Manage Documents")
     needs_db_sync = False
     fsdm_inventory = state.fsdm_inventory
     
@@ -279,36 +293,49 @@ if state.fsdm_inventory:
         with st.container():
             col_name, col_status, col_rm = st.columns([5, 2, 1])
             
-            sheets_data = item["sheets"]
-            # Check for existing sync status in both DB and Vector
-            indexed_sql_count = sum(1 for s in sheets_data.values() if s.get("indexed_sql"))
-            indexed_vec_count = sum(1 for s in sheets_data.values() if s.get("indexed_vector"))
-            selected_count = sum(1 for s in sheets_data.values() if s["selected"])
-            
-            # Sync needs to happen if selected items are not yet indexed in both
-            needs_db_sync = any(
-                s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector")) 
-                for s in sheets_data.values()
-            )
-            # Also needs sync if previously indexed items were deselected
-            if not needs_db_sync:
-                 needs_db_sync = any(
-                    not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
+                
+            if item["type"] == "pdf":
+                if item["indexed"] and item["selected"]:
+                    col_status.success("✅ Indexed")
+                elif not item["indexed"] and item["selected"]:
+                    col_status.warning("⏳ Pending")
+                    needs_db_sync = True
+                elif item["indexed"] and not item["selected"]:
+                    col_status.info("🗑️ To Remove")
+                    needs_db_sync = True
+                
+                new_sel = col_name.checkbox(f"📄 {item['name']}", value=item['selected'], key=f"sel_pdf_{idx}")
+                if new_sel != item["selected"]:
+                    fsdm_inventory[idx]["selected"] = new_sel
+                    state.fsdm_inventory = fsdm_inventory
+                    state.save_project()
+                    st.rerun()
+            else:
+                sheets_data = item["sheets"]
+                # Check for existing sync status in both DB and Vector
+                indexed_sql_count = sum(1 for s in sheets_data.values() if s.get("indexed_sql"))
+                indexed_vec_count = sum(1 for s in sheets_data.values() if s.get("indexed_vector"))
+                selected_count = sum(1 for s in sheets_data.values() if s["selected"])
+                
+                # Sync needs to happen if selected items are not yet indexed in both
+                excel_needs_sync = any(
+                    s["selected"] and (not s.get("indexed_sql") or not s.get("indexed_vector")) 
                     for s in sheets_data.values()
                 )
+                # Also needs sync if previously indexed items were deselected
+                if not excel_needs_sync:
+                    excel_needs_sync = any(
+                        not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
+                        for s in sheets_data.values()
+                    )
 
-            if indexed_sql_count == selected_count and indexed_vec_count == selected_count and selected_count > 0:
-                col_status.success(f"✅ Synced")
-            elif selected_count > 0 or needs_db_sync:
-                col_status.info(f"⏳ Pending")
-                needs_db_sync = True
-            
-            # Also needs sync if previously indexed items were deselected
-            if not needs_db_sync:
-                 needs_db_sync = any(
-                    not s["selected"] and (s.get("indexed_sql") or s.get("indexed_vector"))
-                    for s in sheets_data.values()
-                )
+                # Accumulate into the global flag (do NOT overwrite previous value)
+                needs_db_sync = needs_db_sync or excel_needs_sync
+
+                if indexed_sql_count == selected_count and indexed_vec_count == selected_count and selected_count > 0:
+                    col_status.success(f"✅ Synced")
+                elif selected_count > 0 or needs_db_sync:
+                    col_status.info(f"⏳ Pending")
 
             col_name.markdown(f"📊 **{item['name']}**")
             with col_name.expander("Show Sheets"):
@@ -376,6 +403,7 @@ if state.fsdm_inventory:
         st.divider()
 
     # --- 3. Action Buttons ---
+    # col_btn1, col_btn2 = st.columns([1, 1])
     if needs_db_sync:
         if st.button("🗄️ Sync Tables & Vector", type="primary", width='stretch'):
             with st.spinner("Syncing to SQLite and Vector Store..."):
@@ -390,9 +418,16 @@ if state.fsdm_inventory:
                 st.rerun()
 
 st.divider()
+# Use a full‑width button for clearing all (no column needed)
+if st.button("🧹 Clear All", width='stretch'):
+    state.reset_kb()
+    state.save_project()
+    st.rerun()
+
+st.divider()
 
 # Section 2: Mapping Configuration
-st.header("2. Configure Mapping Documents")
+st.header("2.1 Configure Mapping Instructions")
 
 # --- Instructions Management ---
 st.subheader("⚙️ System Instructions")
@@ -418,6 +453,8 @@ with st.container():
         ProjectManager.save_instructions(state.current_project, 'mapping', mapping_instr)
         st.success("Instructions saved to database!")
 
+st.header("2.2 Configure Mapping Documents")
+
 # --- 1. Multi-File Uploader ---
 mapping_files = st.file_uploader("Upload Mapping Excel Sheets", accept_multiple_files=True, type=["xlsx"], key="map_uploader")
 
@@ -434,7 +471,7 @@ if mapping_files:
             sheets = get_excel_sheets(file_bytes)
             inventory.append({
                 "name": f.name,
-                "sheets": {s: {"selected": False, "config": MappingConfig().__dict__} for s in sheets}
+                "sheets": {s: {"selected": False, "sync_status": False, "config": MappingConfig().__dict__} for s in sheets}
             })
     state.mapping_inventory = inventory
     state.save_project()
@@ -481,9 +518,9 @@ if state.mapping_inventory:
                         
                         with col3:
                             st.markdown("### Physical Source Definitions")
-                            # Add physical source config to cfg if not present
-                            if "physical_source_fields" not in cfg:
-                                cfg["physical_source_fields"] = {"subj": "", "db": "", "tbl": "", "col": "", "type": ""}
+                            # # Add physical source config to cfg if not present
+                            # if "physical_source_fields" not in cfg:
+                            #     cfg["physical_source_fields"] = {"subj": "", "db": "", "tbl": "", "col": "", "type": ""}
                                 
                             cfg["physical_source_fields"]["subj"] = st.text_input("Phys. Subject Area", value=cfg["physical_source_fields"]["subj"], key=f"p_subj_{item['name']}_{s_name}")
                             cfg["physical_source_fields"]["db"] = st.text_input("Phys. DB Name", value=cfg["physical_source_fields"]["db"], key=f"p_db_{item['name']}_{s_name}")
@@ -527,6 +564,36 @@ if state.mapping_inventory:
             MappingService.sync_mappings(state.current_project, state.mapping_inventory)
             st.success("Master Mapping table updated!")
             st.rerun()
+
+    # ---------------------------------------------------------------------
+    # Clear all mapping sheets
+    # ---------------------------------------------------------------------
+    # Provide a full‑width button that removes every mapping sheet from the
+    # project (both the in‑memory inventory and the files on disk). This
+    # mirrors the "Clear All" behaviour used for the KB and FSDM sections.
+    if st.button("🧹 Clear All Mappings", width='stretch'):
+        # -----------------------------------------------------------------
+        # 1️⃣ Delete the physical mapping files from the project directory.
+        # -----------------------------------------------------------------
+        for item in state.mapping_inventory:
+            if "name" in item:
+                ProjectManager.delete_file(state.current_project, item["name"], sub_dir="files/mapping")
+
+        # -----------------------------------------------------------------
+        # 2️⃣ Reset the in‑memory inventory.
+        # -----------------------------------------------------------------
+        state.mapping_inventory = []
+        state.save_project()
+
+        # -----------------------------------------------------------------
+        # 3️⃣ Use MappingService.sync_mappings to clean up DB structures.
+        #    With an empty inventory, this will drop the unified view and all
+        #    mapping tables, mirroring the previous manual cleanup.
+        # -----------------------------------------------------------------
+        MappingService.sync_mappings(state.current_project, state.mapping_inventory)
+
+        st.success("All mapping sheets cleared (files and DB tables removed).")
+        st.rerun()
 
 else:
     st.info("Please upload one or more Mapping Excel files to begin.")

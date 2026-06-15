@@ -388,6 +388,7 @@ class AppState:
         for k in self.PERSISTENT_KEYS:
             if k.startswith("map_"):
                 st.session_state[k] = ""
+        st.cache_data.clear()
         self.save_project()
 
     def get_llm_config(self) -> Dict[str, Any]:

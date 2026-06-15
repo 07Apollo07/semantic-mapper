@@ -11,6 +11,26 @@ def render_mapping_selection(state: AppState):
     - Table: Simplified UI showing only available Target Tables.
     """
     st.markdown("### 🎯 Mapping Selection")
+
+    # -----------------------------------------------------------------
+    # Clear selections & metadata button
+    # -----------------------------------------------------------------
+    if st.button("🧹 Clear Selection", key="clear_mapping_selection"):
+        # Reset all selection related state attributes
+        state.filter_files = []
+        state.filter_sheets = []
+        state.filter_tables = []
+        state.selected_mapping_rows = []
+        # Persist the cleared state
+        state.save_project()
+        # Also clear any stored metadata for the project (metadata.json)
+        try:
+            ProjectManager.save_metadata(state.current_project, {})
+        except Exception as e:
+            # Log but don't break UI – metadata may not exist yet
+            st.warning(f"Failed to clear metadata.json: {e}")
+        st.success("Selection and metadata cleared. Reloading...")
+        st.rerun()
     
     # 1. Load data
     df = ProjectManager.load_df_from_sql(state.current_project, "unified_mapping_view")

@@ -7,7 +7,7 @@ import io
 import re # Import re for regex operations
 import sqlite3 # Import sqlite3 for database operations
 
-PROJECTS_DIR = "projects"
+PROJECTS_DIR = "../projects"
 
 class ProjectManager:
     @staticmethod
@@ -455,16 +455,34 @@ class ProjectManager:
 
     @staticmethod
     def cleanup_resources(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
-        """
-        Unified cleanup: Drops SQLite tables and removes from Vector Store for a deleted file.
-        """
-        # Cleanup DB
-        db_service.delete_all_tables_for_item(project_name, item, prefix)
-        
-        # Cleanup Vector Store
-        for s_name in item["sheets"].keys():
-            vector_service.remove_source(item["name"], s_name)
-        vector_service.remove_source(item["name"])
+            """Unified cleanup for a deleted file.
+
+            The function is used for both **PDF** and **Excel** items.  PDF items do not
+            contain a ``sheets`` dictionary - they only have ``name``, ``type`` and
+            indexing flags.  Attempting to access ``item["sheets"]`` therefore raises a
+            ``KeyError`` which surfaces in the UI when a PDF is removed.
+
+            The updated implementation:
+
+            * Checks whether the ``sheets`` key exists and is a mapping before
+                invoking any DB-related cleanup.
+            * Performs vector-store cleanup for any existing sheet entries (if
+                present) and finally removes the source entry for the file itself.
+            * Handles the PDF case gracefully by skipping DB cleanup and only
+                removing the vector-store entry for the file.
+            """
+            # --- DB cleanup -----------------------------------------------------
+            # Only Excel items have associated SQLite tables.  Guard against missing
+            # ``sheets`` to avoid ``KeyError`` for PDFs.
+            if isinstance(item.get("sheets"), dict):
+                    db_service.delete_all_tables_for_item(project_name, item, prefix)
+
+            # --- Vector store cleanup ------------------------------------------
+            # Remove per‑sheet vectors if any (Excel) and then the file‑level entry.
+            for s_name in item.get("sheets", {}).keys():
+                    vector_service.remove_source(item["name"], s_name)
+            # Finally, remove the source entry for the file itself.
+            vector_service.remove_source(item["name"])
 
     @staticmethod
     def get_all_batch_mappings(project_name: str) -> List[Dict[str, Any]]:

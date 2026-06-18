@@ -3,11 +3,16 @@ import shutil
 import json
 import pandas as pd
 from typing import List, Dict, Any, Optional
-import io
-import re # Import re for regex operations
-import sqlite3 # Import sqlite3 for database operations
+import re  # Import re for regex operations
+import sqlite3  # Import sqlite3 for database operations
+from dotenv import load_dotenv
 
-PROJECTS_DIR = "../projects-display"
+# Load variables from a .env file if present (no‑op when the file is absent)
+load_dotenv()
+
+# Load environment variables (including those from a .env file when python‑dotenv is used).
+# The fallback keeps the original relative path for developers who run the code without Docker.
+PROJECTS_DIR = os.getenv("PROJECTS_DIR", "../projects-display")
 
 class ProjectManager:
     @staticmethod
@@ -67,7 +72,8 @@ class ProjectManager:
     @staticmethod
     def save_metadata(project_name: str, metadata: Dict[str, Any]):
         path = os.path.join(PROJECTS_DIR, project_name, "metadata.json")
-        with open(path, "w") as f:
+        # Explicitly specify UTF‑8 encoding for portability
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4)
 
     @staticmethod
@@ -75,7 +81,8 @@ class ProjectManager:
         path = os.path.join(PROJECTS_DIR, project_name, "metadata.json")
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                # Explicitly specify UTF‑8 encoding for portability
+                with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except json.JSONDecodeError:
                 return {}
@@ -194,8 +201,7 @@ class ProjectManager:
 
     @staticmethod
     def save_mapping_row(project_name: str, row_data: Dict[str, Any]):
-        import sqlite3
-        import json
+        # Use the top‑level imports; no need to re‑import inside the method.
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -455,34 +461,34 @@ class ProjectManager:
 
     @staticmethod
     def cleanup_resources(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
-            """Unified cleanup for a deleted file.
+        """Unified cleanup for a deleted file.
 
-            The function is used for both **PDF** and **Excel** items.  PDF items do not
-            contain a ``sheets`` dictionary - they only have ``name``, ``type`` and
-            indexing flags.  Attempting to access ``item["sheets"]`` therefore raises a
-            ``KeyError`` which surfaces in the UI when a PDF is removed.
+        The function is used for both **PDF** and **Excel** items.  PDF items do not
+        contain a ``sheets`` dictionary - they only have ``name``, ``type`` and
+        indexing flags.  Attempting to access ``item["sheets"]`` therefore raises a
+        ``KeyError`` which surfaces in the UI when a PDF is removed.
 
-            The updated implementation:
+        The updated implementation:
 
-            * Checks whether the ``sheets`` key exists and is a mapping before
-                invoking any DB-related cleanup.
-            * Performs vector-store cleanup for any existing sheet entries (if
-                present) and finally removes the source entry for the file itself.
-            * Handles the PDF case gracefully by skipping DB cleanup and only
-                removing the vector-store entry for the file.
-            """
-            # --- DB cleanup -----------------------------------------------------
-            # Only Excel items have associated SQLite tables.  Guard against missing
-            # ``sheets`` to avoid ``KeyError`` for PDFs.
-            if isinstance(item.get("sheets"), dict):
-                    db_service.delete_all_tables_for_item(project_name, item, prefix)
+        * Checks whether the ``sheets`` key exists and is a mapping before
+            invoking any DB-related cleanup.
+        * Performs vector-store cleanup for any existing sheet entries (if
+            present) and finally removes the source entry for the file itself.
+        * Handles the PDF case gracefully by skipping DB cleanup and only
+            removing the vector-store entry for the file.
+        """
+        # --- DB cleanup -----------------------------------------------------
+        # Only Excel items have associated SQLite tables.  Guard against missing
+        # ``sheets`` to avoid ``KeyError`` for PDFs.
+        if isinstance(item.get("sheets"), dict):
+                db_service.delete_all_tables_for_item(project_name, item, prefix)
 
-            # --- Vector store cleanup ------------------------------------------
-            # Remove per‑sheet vectors if any (Excel) and then the file‑level entry.
-            for s_name in item.get("sheets", {}).keys():
-                    vector_service.remove_source(item["name"], s_name)
-            # Finally, remove the source entry for the file itself.
-            vector_service.remove_source(item["name"])
+        # --- Vector store cleanup ------------------------------------------
+        # Remove per‑sheet vectors if any (Excel) and then the file‑level entry.
+        for s_name in item.get("sheets", {}).keys():
+                vector_service.remove_source(item["name"], s_name)
+        # Finally, remove the source entry for the file itself.
+        vector_service.remove_source(item["name"])
 
     @staticmethod
     def get_all_batch_mappings(project_name: str) -> List[Dict[str, Any]]:

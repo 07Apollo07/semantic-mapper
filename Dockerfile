@@ -4,10 +4,14 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Define where projects are stored inside the container (matches the bind mount in compose)
-ENV PROJECTS_DIR=/projects-display
+# Define where projects are stored inside the container.
+# This defaults to the path the application expects when running in Docker.
+# It can still be overridden at build time with `--build-arg PROJECTS_DIR=…` if needed.
+ARG PROJECTS_DIR=/app/project-display
+ENV PROJECTS_DIR=${PROJECTS_DIR}
 
-# Ensure the projects directory exists at build time (also created at runtime if missing)
+# Ensure the projects directory exists at build time (and will also exist at runtime
+# if the host does not mount a volume over it).
 RUN mkdir -p "$PROJECTS_DIR"
 
 # Install system dependencies required by some Python packages (e.g., pandas)

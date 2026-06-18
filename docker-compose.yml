@@ -1,13 +1,18 @@
-version: "3.8"
-
 services:
   semantic-mapper:
     build: .
     container_name: semantic-mapper
+    # Load defaults from .env (Compose loads .env automatically, but we make it explicit)
+    env_file:
+      - ./.env
+    # Hard‑coded override – this value will take precedence over the .env entry
+    environment:
+      - PROJECTS_DIR=/app/project-display
+      - PYTHONUNBUFFERED=1
     volumes:
-      - .:/app
-      - ../projects-display:/projects-display
+      # - .:/app
+      # Use the variable defined above; it will be /projects-display unless overridden at run‑time
+      - ${HOST_PROJECTS_DIR}:/app/project-display
     ports:
       - "8501:8501"
-    environment:
-      - PYTHONUNBUFFERED=1
+    # (Removed duplicate environment block – PYTHONUNBUFFERED is now defined above)

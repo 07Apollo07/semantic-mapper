@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  semantic-mapper:
+    build: .
+    container_name: semantic-mapper
+    volumes:
+      - .:/app
+      - ../projects-display:/projects-display
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1

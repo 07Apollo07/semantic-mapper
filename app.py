@@ -518,9 +518,9 @@ if state.mapping_inventory:
                         
                         with col3:
                             st.markdown("### Physical Source Definitions")
-                            # # Add physical source config to cfg if not present
-                            # if "physical_source_fields" not in cfg:
-                            #     cfg["physical_source_fields"] = {"subj": "", "db": "", "tbl": "", "col": "", "type": ""}
+                            # Add physical source config to cfg if not present
+                            if "physical_source_fields" not in cfg:
+                                cfg["physical_source_fields"] = {"subj": "", "db": "", "tbl": "", "col": "", "type": ""}
                                 
                             cfg["physical_source_fields"]["subj"] = st.text_input("Phys. Subject Area", value=cfg["physical_source_fields"]["subj"], key=f"p_subj_{item['name']}_{s_name}")
                             cfg["physical_source_fields"]["db"] = st.text_input("Phys. DB Name", value=cfg["physical_source_fields"]["db"], key=f"p_db_{item['name']}_{s_name}")

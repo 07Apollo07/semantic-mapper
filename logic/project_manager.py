@@ -7,7 +7,7 @@ import io
 import re # Import re for regex operations
 import sqlite3 # Import sqlite3 for database operations
 
-PROJECTS_DIR = "../projects"
+PROJECTS_DIR = "../projects-display"
 
 class ProjectManager:
     @staticmethod

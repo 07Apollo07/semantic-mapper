@@ -9,6 +9,8 @@ services:
     environment:
       - PROJECTS_DIR=/app/project-display
       - PYTHONUNBUFFERED=1
+      - UID=${UID}
+      - GID=${GID}
     volumes:
       # - .:/app
       # Use the variable defined above; it will be /projects-display unless overridden at run‑time

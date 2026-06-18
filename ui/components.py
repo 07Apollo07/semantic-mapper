@@ -3,6 +3,7 @@ import pandas as pd
 from logic.model_fetcher import fetch_models
 from logic import AppState
 from streamlit_js import st_js
+from agent.agents.agent_info import AGENT_INFO
 
 def sidebar_config(state: AppState):
     """Sidebar for configuration."""
@@ -38,6 +39,42 @@ def sidebar_config(state: AppState):
             index=0 if available_models and st.session_state.get("selected_model") in available_models else 0 if available_models else None,
             key="selected_model"
         )
+
+        # ----- Agent Selector -----
+        st.subheader("🤖 Agent Selection")
+        # Build display options from AGENT_INFO keys
+        agent_options = list(AGENT_INFO.keys())
+        # Map to display names
+        display_names = [AGENT_INFO[a]["display_name"] for a in agent_options]
+        # Determine current selection index
+        current_name = st.session_state.get("agent_name", "DEFAULT")
+        try:
+            current_idx = agent_options.index(current_name)
+        except ValueError:
+            current_idx = 0
+        selected_display = st.selectbox(
+            "Select Agent",
+            options=display_names,
+            index=current_idx,
+            key="agent_selector"
+        )
+        # Map back to internal name
+        selected_name = agent_options[display_names.index(selected_display)]
+        if selected_name != st.session_state.get("agent_name"):
+            st.session_state["agent_name"] = selected_name
+            # Persist using the current state instance
+            state.save_project()
+            st.rerun()
+
+        # Help expander showing description
+        with st.expander("Agent Details"):
+            info = AGENT_INFO.get(st.session_state.get("agent_name", "DEFAULT"), {})
+            st.markdown(f"**{info.get('display_name', '')}**")
+            st.markdown(info.get('description', ''))
+            st.markdown("**Required Docs:** " + ", ".join(info.get('required_docs', [])))
+            st.markdown("**Default Mappings:** " + info.get('default_mappings', ''))
+            st.markdown(f"**Can Regenerate SQL:** {info.get('can_regen_sql', False)}")
+            st.markdown(f"**Can Regenerate FSDM:** {info.get('can_regen_fsdm', False)}")
 
                 # st.radio(   
         #     "Agent Mode",

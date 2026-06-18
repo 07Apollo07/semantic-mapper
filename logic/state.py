@@ -17,6 +17,7 @@ class AppState:
         "step", "kb_inventory", "fsdm_inventory", "mapping_config", "mapping_inventory",
         "logs",
         "base_url", "api_key", "selected_model", "available_models", "agent_mode",
+        "agent_name",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
         "map_p_subj", "map_p_db", "map_p_tbl", "map_p_col", "map_p_type",
@@ -44,6 +45,7 @@ class AppState:
             "selected_model": "gpt-4o",
             "available_models": [],
             "agent_mode": "One-shot",
+            "agent_name": "DEFAULT",  # New persistent key for selected agent
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
             "map_p_subj": "", "map_p_db": "", "map_p_tbl": "", "map_p_col": "", "map_p_type": "",
@@ -155,6 +157,16 @@ class AppState:
     @agent_mode.setter
     def agent_mode(self, value: str):
         st.session_state["agent_mode"] = value
+        self.save_project()
+
+    @property
+    def agent_name(self) -> str:
+        """Return the currently selected agent name (persisted in session state)."""
+        return st.session_state.get("agent_name", "DEFAULT")
+
+    @agent_name.setter
+    def agent_name(self, value: str):
+        st.session_state["agent_name"] = value
         self.save_project()
 
     @property

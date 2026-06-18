@@ -12,7 +12,7 @@ from logic.mapping.config import MappingConfig
 from logic.mapping.service import MappingService
 from logic.utils import get_cell_value
 from agent.agents.executor import AgentExecutor
-from agent.agents.fsdm_metadata import generate_metadata
+from agent.agents.Metadata.fsdm_metadata import generate_metadata
 from agent.tools.tools import sample_table_data_logic
 from ui import sidebar_config, display_logs, render_mapping_selection, render_fsdm_discovery_ui
 # from agent.agents.test_fsdm import render_fsdm_test
@@ -686,6 +686,10 @@ if state.processing_mode == "Row":
                 st.caption(f"**Src:** `{s.get('db_name')}.{s.get('table_name')}.{s.get('column_name')}` | **Tgt:** `{t.get('db_name')}.{t.get('table_name')}.{t.get('column_name')}`")
 
                 # Details Expander
+                # Create a single executor instance for the current session (used for regen capabilities)
+                executor = AgentExecutor(state)
+                # Debug display: show which executor class is being used for this session
+                st.caption(f"Current Agent: {state.agent_name}")
                 with st.expander("Details, Reasoning & Feedback", expanded=False):
                     # 1. FSDM Discovery Intelligence (Phase 1)
                     st.markdown("#### 🧠 Phase 1: FSDM Discovery Intelligence")
@@ -749,9 +753,13 @@ if state.processing_mode == "Row":
                             ProjectManager.update_mapping_row(state.current_project, idx, new_res)
                 
                     c_btn1, c_btn2 = st.columns(2)
-                    if c_btn1.button("🔄 Regenerate FSDM", key=f"btn_fsdm_{row_idx}", on_click=on_regen_fsdm, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
+                    # Disable FSDM regeneration if the selected agent does not support it
+                    disable_fsdm = sql_is_verified or not executor.can_regen_fsdm
+                    # Disable SQL regeneration if the selected agent does not support it
+                    disable_sql = sql_is_verified or not executor.can_regen_sql
+                    if c_btn1.button("🔄 Regenerate FSDM", key=f"btn_fsdm_{row_idx}", on_click=on_regen_fsdm, args=(row_idx, res), disabled=disable_fsdm, use_container_width=True):
                         st.rerun()
-                    if c_btn2.button("⚙️ Regenerate SQL", key=f"btn_sql_{row_idx}", on_click=on_regen_sql, args=(row_idx, res), disabled=sql_is_verified, use_container_width=True):
+                    if c_btn2.button("⚙️ Regenerate SQL", key=f"btn_sql_{row_idx}", on_click=on_regen_sql, args=(row_idx, res), disabled=disable_sql, use_container_width=True):
                         st.rerun()
 
         # Export all tables from DB
@@ -904,7 +912,7 @@ if state.mapping_active:
                         }
                         
                         executor = AgentExecutor(state)
-                        res = executor.process_mapping_custom(row_data, r_idx)
+                        res = executor.process_row(row_data, r_idx)
                         ProjectManager.save_mapping_row(state.current_project, res)
                         st.write(f"✅ Saved result for {unique_id}")
                     else:

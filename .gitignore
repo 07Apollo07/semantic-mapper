@@ -215,11 +215,14 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-prompt.md
-projects-archive/
-projects/
-PROGRESS.md
+# prompt.md
+# projects-archive/
+# projects/
+# PROGRESS.md
 test_prompt.py
 # agent/agents/mapping_table_group_agent.py
 agent/agents/LIC/mapping_custom.py
 agent/agents/Temp/mapping_custom.py
+agent/agents/Row/Alraji
+agent/agents/Row/LIC
+AGENT_PLAN.md

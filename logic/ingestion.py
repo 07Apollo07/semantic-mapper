@@ -3,9 +3,9 @@ import sqlite3
 import pandas as pd
 import io
 from typing import List, Dict, Any, Optional
-from ..project_manager import ProjectManager
-from ..vector_store.service import VectorStoreService
-from ..vector_store.processors import process_excel_sheets, split_documents, process_pdf
+from logic.project_manager import ProjectManager
+from logic.vector_store.service import VectorStoreService
+from logic.vector_store.processors import process_excel_sheets, split_documents, process_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class IngestionService:
             
             if s_info.get("selected") and not s_info.get("indexed_sql"):
                 # Use FSDM preprocessing logic
-                from ..fsdm.service import preprocess_sheet
+                from logic.fsdm.service import preprocess_sheet
                 combine = s_info.get("combine_headers", False)
                 df = preprocess_sheet(file_bytes, s_name, combine)
                 ProjectManager.save_df_to_sql(project_name, table_name, df)

@@ -17,4 +17,3 @@ services:
       - ${HOST_PROJECTS_DIR}:/app/project-display
     ports:
       - "8501:8501"
-    # (Removed duplicate environment block – PYTHONUNBUFFERED is now defined above)

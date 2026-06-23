@@ -1,16 +1,30 @@
+# streamlit
+# langchain
+# langgraph
+# langchain-openai
+# langchain-community
+# langchain_chroma 
+# chromadb
+# pandas
+# openpyxl
+# pypdf
+# python-dotenv
+# tiktoken
+# requests
+# langchain-huggingface
+# sentence-transformers
+# streamlit_js
+
 streamlit
-langchain
-langgraph
-langchain-openai
-langchain-community
-langchain_chroma 
-chromadb
 pandas
-openpyxl
-pypdf
+langchain
+langchain-openai
+langchain_chroma
+langchain_huggingface
+langchain-text-splitters
+langchain-community 
 python-dotenv
-tiktoken
-requests
-langchain-huggingface
 sentence-transformers
-streamlit_js
+pypdf
+torchvision
+openpyxl

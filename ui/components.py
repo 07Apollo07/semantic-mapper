@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from logic.model_fetcher import fetch_models
 from logic import AppState
-from streamlit_js import st_js
+# from streamlit_js import st_js
 from agent.agents.agent_info import AGENT_INFO
 
 def sidebar_config(state: AppState):

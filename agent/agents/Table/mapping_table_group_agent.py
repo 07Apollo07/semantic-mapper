@@ -6,6 +6,21 @@ from agent.agents.agents_utils import MappingState, MappingOutput
 from agent.tools.tools import lg_get_instructions, query_full_db_data
 import pandas as pd
 
+def _extract_from_clause(df: pd.DataFrame) -> str:
+    """Extract the `remarks` value from the first row of the DataFrame.
+
+    The first row of the incoming Excel/CSV data contains a ``remarks`` column
+    that holds the full ``FROM`` clause for the mapping.  This helper returns
+    that clause as a plain string, or an empty string if the column is missing
+    or the value is null/empty.
+    """
+    if "remarks" not in df.columns:
+        return ""
+    first_remarks = df.iloc[0]["remarks"]
+    if pd.isna(first_remarks):
+        return ""
+    return str(first_remarks).strip()
+
 def make_general_instructions(project):
     return lg_get_instructions.invoke({"scope": "global", "project_name": project})
 
@@ -156,6 +171,8 @@ def create_mapping_table_group(model_name="gpt-4o", api_key=None, base_url=None,
         # Drop columns that should not be part of the prompt
         df = df.drop(columns=['_src_file', '_src_sheet'], errors='ignore')
         df = df.dropna(axis=1, how='all')
+        # Extract the FROM clause from the first row's ``remarks`` column.
+        from_clause = _extract_from_clause(df)
         # Table headers
         headers = list(df.columns)
         # Rows as comma‑separated values (excluding NaNs)
@@ -170,31 +187,33 @@ Goal: Generate a correct SQL mapping for an entire target table based on many ro
 """
         user_content = f"""
 
-<Teradata SQL Generation Instructions>
-{teradata_instructions()}
-<Teradata SQL Generation Instructions>
+    <Teradata SQL Generation Instructions>
+    {teradata_instructions()}
+    <Teradata SQL Generation Instructions>
 
-transformation_logic - should contain a full SQL Query
-Instructions for SQL Query - 
-Uses the source tables and columns exactly as specified in the Excel sheet.
-Includes all joins, filters, derived-table logic, and calculations exactly as written. 
-1st row and header give you information on what we are working with, consider 1st row as metadata for header. 
-Use qualify row and coalasce whereever applicable
-Start the sql with - CREATE VOLATILE TABLE
-SQL should be easy to read and understand
-Make subqueries and the final output subquery should be at the end
-Do not say you can't do it.
+    transformation_logic - should contain a full SQL Query
+    Instructions for SQL Query - 
+    Uses the source tables and columns exactly as specified in the Excel sheet.
+    Includes all joins, filters, derived-table logic, and calculations exactly as written. 
+    1st row and header give you information on what we are working with, consider 1st row as metadata for header. 
+    Use qualify row and coalasce whereever applicable
+    Use Insert statement at the start when making the sql,
+    SQL should be easy to read and understand
+    Make subqueries and the final output subquery should be at the end
+    Do not say you can't do it.
 
-reasoning - should be in bullet points, keep it short 
+    reasoning - should be in bullet points, keep it short 
 
-# Batch Table Mapping
-Project: {project}
-Table headers: {headers}
-Rows data:\n{rows_str}\n\n
-<instructions>
-- **Global Style/Patterns:** {global_instr}
-- **Mapping-Specific Rules:** {mapping_instr}
-</instructions>\n\n
+    # Batch Table Mapping
+    Project: {project}
+    Table headers: {headers}
+    Rows data:\n{rows_str}\n\n
+    # FROM clause (extracted from first row) (Use this from clause)
+    {from_clause if from_clause else "# No FROM clause supplied in first row"}\n\n
+    <instructions>
+    - **Global Style/Patterns:** {global_instr}
+    - **Mapping-Specific Rules:** {mapping_instr}
+    </instructions>\n\n
 """
         return {"messages": [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]}
 

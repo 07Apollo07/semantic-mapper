@@ -106,7 +106,9 @@ class DefaultExecutor:
             "fsdm_instructions": "",
             "metadata": metadata,
             "project_name": self.state.current_project,
-            "messages": [HumanMessage(content=f"Trace lineage for {source_info.get('column_name')} in {source_table}.")]
+            "messages": [HumanMessage(content=f"Trace lineage for {source_info.get('column_name')} in {source_table}.")],
+            "transformation_specs": row_data.get('transformation_specs', {}),
+            "physical_source_info": row_data.get('physical_source_info', {}),
         }
         if feedback:
             fsdm_inputs["feedback"] = feedback

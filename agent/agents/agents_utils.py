@@ -14,6 +14,8 @@ class FSDMDiscoveryState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
+    transformation_specs: Dict[str, Any]
+    physical_source_info: Dict[str, Any]
     system_prompt: Optional[str] # Cache for the system prompt
 
 class FSDMIntentOutput(BaseModel):

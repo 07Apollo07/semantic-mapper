@@ -5,10 +5,13 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from agent.agents.agents_utils import FSDMDiscoveryState, FSDMIntentOutput
 from agent.tools.tools import (
-    lg_get_instructions,
-    lg_get_table_schema,
-    lg_query_db,
-    lg_list_tables
+  lg_get_instructions,
+  lg_get_table_schema,
+  lg_query_db,
+  lg_list_tables,
+  lg_fetch_vector_context_fsdm,
+  lg_get_fsdm_metadata,
+  lg_sample_table_data,
 )
 
 def should_continue(state: FSDMDiscoveryState):
@@ -33,8 +36,15 @@ def create_fsdm_detective(model_name="gpt-4o", api_key=None, base_url=None):
         base_url=f"{base_url.rstrip('/')}/v1" if base_url else None
     )
     
-    # Discovery tools
-    tools = [lg_get_table_schema, lg_query_db, lg_list_tables]
+    # Discovery tools – now include vector search, metadata fetch, and sample data
+    tools = [
+      lg_fetch_vector_context_fsdm,
+      lg_get_fsdm_metadata,
+      lg_sample_table_data,
+      lg_get_table_schema,
+      lg_query_db,
+      lg_list_tables,
+    ]
     tool_node = ToolNode(tools)
     model = llm.bind_tools(tools + [FSDMIntentOutput])
 

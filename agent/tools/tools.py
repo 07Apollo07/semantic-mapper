@@ -8,44 +8,65 @@ import pandas as pd
 import sqlite3
 import ast
 
-def list_project_tables_logic(project_name: str) -> str:
-    """
-    Lists all available tables in the project's SQLite database.
-    Use this if you are unsure about table names before querying.
-    """
-    db_uri = ProjectManager.get_db_uri(project_name)
-    db = SQLDatabase.from_uri(db_uri)
-    try:
-        tables = db.get_usable_table_names()
-        return f"Available tables: {', '.join(tables)}"
-    except Exception as e:
-        return f"Error listing tables: {str(e)}"
-
-def list_fsdm_tables_logic(project_name: str) -> str:
-    """
-    Lists available tables in the project's SQLite database that start with 'fsdm_etl_'.
-    """
-    db_uri = ProjectManager.get_db_uri(project_name)
-    db = SQLDatabase.from_uri(db_uri)
-    try:
-        all_tables = db.get_usable_table_names()
-        fsdm_tables = [t for t in all_tables if t.lower().startswith("fsdm_etl_")]
-        return f"Available FSDM tables: {', '.join(fsdm_tables)}"
-    except Exception as e:
-        return f"Error listing FSDM tables: {str(e)}"
-
-def fetch_vector_context_logic(query: str, project_name: str) -> str:
-    """
-    Performs a semantic search on the project's knowledge base (PDFs, documents).
-    Useful for finding business logic, documentation, and unstructured context.
-    """
+# VS
+def fetch_vector_context_semantic(query: str, project_name: str) -> str:
+    """Performs Vector search on the Semantic knowledge base."""
     from logic.vector_store import VectorStoreManager
     project_path = ProjectManager.get_project_path(project_name)
     vs_path = os.path.join(project_path, "vector_store")
     v_manager = VectorStoreManager(persist_directory=vs_path)
-    v_manager.initialize_store()
-    docs = v_manager.query(query, k=5)
+    docs = v_manager.query(query, k=5, collection_name="semantic")
     return "\n\n".join([doc.page_content for doc in docs])
+
+def fetch_vector_context_fsdm(query: str, project_name: str) -> str:
+    """Performs Vector search on the project FSDM knowledge base."""
+    from logic.vector_store import VectorStoreManager
+    project_path = ProjectManager.get_project_path(project_name)
+    vs_path = os.path.join(project_path, "vector_store")
+    v_manager = VectorStoreManager(persist_directory=vs_path)
+    docs = v_manager.query(query, k=5, collection_name="fsdm")
+    return "\n\n".join([doc.page_content for doc in docs])
+# Semantic
+def get_semantic_metadata_logic(table_name: str, project_name: str) -> str:
+    """Finds metadata for a specific semantic table."""
+    from logic.project_manager import ProjectManager
+    meta = ProjectManager.load_metadata(project_name)
+    for item in meta.get("kb_inventory", []):
+        for s_name, s_info in item.get("sheets", {}).items():
+            if f"semantic_{s_name.lower()}" == table_name:
+                return s_info.get("metadata", "No metadata found.")
+    return "Table not found in semantic knowledge base."
+
+
+# FSDM
+def get_fsdm_metadata_logic(table_name: str, project_name: str) -> str:
+    """Finds metadata for a specific FSDM table."""
+    from logic.project_manager import ProjectManager
+    meta = ProjectManager.load_metadata(project_name)
+    for item in meta.get("fsdm_inventory", []):
+        for s_name, s_info in item.get("sheets", {}).items():
+            if f"fsdm_etl_{s_name.lower()}" == table_name:
+                return s_info.get("metadata", "No metadata found.")
+    return "Table not found in FSDM knowledge base."
+
+# Common
+def list_tables_logic(project_name: str, table_type: str = "all") -> str:
+    """Lists tables in the project's SQLite database, optionally filtered by type."""
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    try:
+        all_tables = db.get_usable_table_names()
+        if table_type == "semantic":
+            tables = [t for t in all_tables if t.lower().startswith("semantic_")]
+            return f"Available Semantic tables: {', '.join(tables)}"
+        elif table_type == "fsdm":
+            tables = [t for t in all_tables if t.lower().startswith("fsdm_etl_")]
+            return f"Available FSDM tables: {', '.join(tables)}"
+        else:
+            return f"Available tables: {', '.join(all_tables)}"
+    except Exception as e:
+        return f"Error listing tables: {str(e)}"
+    
 
 def query_db_logic(sql_query: str, project_name: str) -> str:
     """
@@ -63,6 +84,26 @@ def query_db_logic(sql_query: str, project_name: str) -> str:
     except Exception as e:
         return f"Error executing SQL: {str(e)}"
 
+
+def query_full_db_data(sql_query: str, project_name: str) -> str:
+    """
+    Executes a SQL SELECT query against the project database using raw sqlite3.
+    This bypasses LangChain's default result truncation.
+    """
+    db_path = ProjectManager.get_db_path(project_name)
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        rows = cursor.fetchall()
+        headers = [description[0] for description in cursor.description]
+        return f"Headers: {headers}\nRows: {rows}"
+    except Exception as e:
+        return f"Error executing query: {str(e)}"
+    finally:
+        conn.close()
+
+
 def get_table_schema_logic(table_name: str, project_name: str) -> str:
     """
     Returns the CREATE TABLE statement for a specific table.
@@ -74,6 +115,7 @@ def get_table_schema_logic(table_name: str, project_name: str) -> str:
         return db.get_table_info([table_name])
     except Exception as e:
         return f"Error fetching schema: {str(e)}"
+
 
 def sample_table_data_logic(table_name: str, project_name: str, n: int = 5) -> str:
     """
@@ -94,6 +136,20 @@ def sample_table_data_logic(table_name: str, project_name: str, n: int = 5) -> s
         return f"Error sampling data from {table_name}: {str(e)}"
     finally:
         conn.close()
+
+# Unused
+def list_fsdm_tables_logic(project_name: str) -> str:
+    """
+    Lists available tables in the project's SQLite database that start with 'fsdm_etl_'.
+    """
+    db_uri = ProjectManager.get_db_uri(project_name)
+    db = SQLDatabase.from_uri(db_uri)
+    try:
+        all_tables = db.get_usable_table_names()
+        fsdm_tables = [t for t in all_tables if t.lower().startswith("fsdm_etl_")]
+        return f"Available FSDM tables: {', '.join(fsdm_tables)}"
+    except Exception as e:
+        return f"Error listing FSDM tables: {str(e)}"
 
 def get_mapping_summary_logic(project_name: str, tables: List[str]) -> str:
     """
@@ -164,30 +220,50 @@ def get_fsdm_summary_logic(project_name: str, tables: List[str]) -> str:
     return "\n".join(summary) if len(summary) > 1 else "No metadata found for specified tables."
 
 # New Tool Definitions
+# VS
+@tool
+def lg_fetch_vector_context_semantic(query: str, project_name: str) -> str:
+    """Performs a semantic search on the Semantic knowledge base."""
+    print(f"[Tool: Vector Search] Query: {query}, Project: {project_name}")
+    res = fetch_vector_context_semantic(query, project_name)
+    print(f"[Tool: Vector Search] Returning result snippet: {res[:200]}...")
+    return res
 
 @tool
-def lg_list_project_tables(project_name: str) -> str:
-    """Lists all available tables in the project's SQLite database."""
-    print(f"[Tool: List Tables] Project: {project_name}")
-    res = list_project_tables_logic(project_name)
+def lg_fetch_vector_context_fsdm(query: str, project_name: str) -> str:
+    """Performs a semantic search on the FSDM knowledge base."""
+    print(f"[Tool: Vector Search] Query: {query}, Project: {project_name}")
+    res = fetch_vector_context_fsdm(query, project_name)
+    print(f"[Tool: Vector Search] Returning result snippet: {res[:200]}...")
+    return res
+
+# Semantic
+@tool
+def lg_get_semantic_metadata(table_name: str, project_name: str) -> str:
+    """Extracts enriched metadata (definitions, purpose, instructions) for semantic tables."""
+    print(f"[Tool: Semantic Metadata] Table: {table_name}, Project: {project_name}")
+    res = get_semantic_metadata_logic(table_name, project_name)
+    print(f"[Tool: Semantic Metadata] Result: {res[:200]}...")
+    return res
+
+# FSDM
+@tool
+def lg_get_fsdm_metadata(table_name: str, project_name: str) -> str:
+    """Extracts technical metadata and schema descriptions for FSDM/ETL tables."""
+    print(f"[Tool: FSDM Metadata] Table: {table_name}, Project: {project_name}")
+    res = get_fsdm_metadata_logic(table_name, project_name)
+    print(f"[Tool: FSDM Metadata] Result: {res[:200]}...")
+    return res
+
+# Common
+@tool
+def lg_list_tables(project_name: str, table_type: str = "all") -> str:
+    """Lists tables based on type: 'all', 'semantic', or 'fsdm'."""
+    print(f"[Tool: List Tables] Type: {table_type}, Project: {project_name}")
+    res = list_tables_logic(project_name, table_type)
     print(f"[Tool: List Tables] Result: {res}")
     return res
 
-@tool
-def lg_list_fsdm_tables_logic(project_name: str) -> str:
-    """Lists available tables in the project's SQLite database that start with 'fsdm_etl_'."""
-    print(f"[Tool: List FSDM Tables] Project: {project_name}")
-    res = list_fsdm_tables_logic(project_name)
-    print(f"[Tool: List FSDM Tables] Result: {res}")
-    return res
-
-@tool
-def lg_fetch_vector_context(query: str, project_name: str) -> str:
-    """Performs a semantic search on the project's knowledge base."""
-    print(f"[Tool: Vector Search] Query: {query}, Project: {project_name}")
-    res = fetch_vector_context_logic(query, project_name)
-    print(f"[Tool: Vector Search] Returning result snippet: {res[:200]}...")
-    return res
 
 @tool
 def lg_query_db(sql_query: str, project_name: str) -> str:
@@ -214,6 +290,24 @@ def lg_sample_table_data(table_name: str, project_name: str, n: int = 5) -> str:
     return res
 
 @tool
+def lg_get_instructions(scope: str, project_name: str) -> str:
+    """Retrieves instructions for a given scope (global, mapping, fsdm)."""
+    print(f"[Tool: Instructions] Fetching scope: {scope}, Project: {project_name}")
+    instr = ProjectManager.get_instructions(project_name, scope)
+    res = instr if instr and instr.strip() != "" else f"No instructions defined for {scope}."
+    print(f"[Tool: Instructions] Result length: {len(res)}")
+    return res
+
+# Unused
+@tool
+def lg_list_fsdm_tables_logic(project_name: str) -> str:
+    """Lists available tables in the project's SQLite database that start with 'fsdm_etl_'."""
+    print(f"[Tool: List FSDM Tables] Project: {project_name}")
+    res = list_fsdm_tables_logic(project_name)
+    print(f"[Tool: List FSDM Tables] Result: {res}")
+    return res
+
+@tool
 def lg_get_mapping_summary(tables: List[str], project_name: str) -> str:
     """Summarizes mapping logic for the provided tables."""
     print(f"[Tool: Mapping Summary] Tables: {tables}, Project: {project_name}")
@@ -227,15 +321,6 @@ def lg_get_fsdm_summary(tables: List[str], project_name: str) -> str:
     print(f"[Tool: FSDM Summary] Tables: {tables}, Project: {project_name}")
     res = get_fsdm_summary_logic(project_name, tables)
     print(f"[Tool: FSDM Summary] Returning result snippet: {res}...")
-    return res
-
-@tool
-def lg_get_instructions(scope: str, project_name: str) -> str:
-    """Retrieves instructions for a given scope (global, mapping, fsdm)."""
-    print(f"[Tool: Instructions] Fetching scope: {scope}, Project: {project_name}")
-    instr = ProjectManager.get_instructions(project_name, scope)
-    res = instr if instr and instr.strip() != "" else f"No instructions defined for {scope}."
-    print(f"[Tool: Instructions] Result length: {len(res)}")
     return res
 
 # # # @tool

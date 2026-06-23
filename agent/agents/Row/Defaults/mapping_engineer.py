@@ -8,7 +8,6 @@ from agent.tools.tools import (
     lg_get_instructions,
     lg_get_table_schema,
     lg_query_db,
-    lg_fetch_vector_context
 )
 
 def should_continue(state: SemanticMappingState):
@@ -34,7 +33,7 @@ def create_mapping_engineer(retriever, model_name="gpt-4o", api_key=None, base_u
     )
     
     # Engineering tools
-    tools = [lg_get_table_schema, lg_query_db, lg_fetch_vector_context]
+    tools = [lg_get_table_schema, lg_query_db]
     tool_node = ToolNode(tools)
     model = llm.bind_tools(tools + [MappingOutput])
 

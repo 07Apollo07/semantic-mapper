@@ -14,6 +14,8 @@ class FSDMDiscoveryState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     project_name: str
     feedback: Optional[str]
+    transformation_specs: Dict[str, Any]
+    physical_source_info: Dict[str, Any]
     system_prompt: Optional[str] # Cache for the system prompt
 
 class FSDMIntentOutput(BaseModel):
@@ -39,7 +41,16 @@ class SemanticMappingState(TypedDict):
     feedback: Optional[str]
     system_prompt: Optional[str] # Cache for the system prompt
 
+class MappingState(TypedDict):
+    """Unified state for custom, modular mapping agents."""
+    row_data: Dict[str, Any]
+    project_name: str
+    feedback: Optional[str]
+    vector_context: Optional[str]
+    # We leave the output fields generic or handle via node returns
+    messages: Annotated[List[BaseMessage], add_messages]
+
 class MappingOutput(BaseModel):
-    transformation_type: str = Field(description="Type of transformation: e.g., 1:1, Join, Aggregation, Case expression.")
-    transformation_logic: str = Field(description="The complete SQL transformation expression.")
     reasoning: str = Field(description="Detailed logic explanation.")
+    transformation_type: str = Field(description="Type of transformation: e.g., 1:1, Join, Aggregation, Case expression.")
+    transformation_logic: str = Field(description="This fiels should only contain a complete multiline sql expression and nothing else, should start with a select statement only relevent columns from source to target for mapping purpose")

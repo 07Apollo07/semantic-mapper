@@ -38,9 +38,6 @@ def preprocess_sheet(file_bytes, sheet_name, combine_headers=True):
                 else:
                     combined = h2
                 
-                # Replace spaces with underscores for better DB compatibility if desired, 
-                # but following user preference "source_table name" (mixture)
-                # Let's keep it close to their example but ensure it's clean.
                 new_columns.append(combined.strip())
             
             df.columns = new_columns
@@ -52,41 +49,42 @@ def preprocess_sheet(file_bytes, sheet_name, combine_headers=True):
 
     return pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
 
-class FSDMService:
+class DBService:
     @staticmethod
-    def sync(project_name, item):
+    def sync(project_name, item, prefix: str):
         """
-        Processes and syncs selected sheets from an FSDM file to SQLite.
+        Processes and syncs selected sheets to SQLite.
         Drops tables if a sheet is deselected.
         """
         file_bytes = item["bytes"]
         for s_name, s_info in item["sheets"].items():
-            table_name = "FSDM/ETL_" + s_name
+            table_name = prefix + s_name
             
-            # Case 1: Sheet selected but not indexed -> Add
-            if s_info.get("selected") and not s_info.get("indexed"):
+            # Case 1: Sheet selected but not indexed_sql -> Add
+            if s_info.get("selected") and not s_info.get("indexed_sql"):
                 combine = s_info.get("combine_headers", False)
                 df = preprocess_sheet(file_bytes, s_name, combine)
                 ProjectManager.save_df_to_sql(project_name, table_name, df)
-                s_info["indexed"] = True
+                s_info["indexed_sql"] = True
                 
-            # Case 2: Sheet deselected but indexed -> Remove
-            elif not s_info.get("selected") and s_info.get("indexed"):
-                FSDMService.delete_table(project_name, table_name)
-                s_info["indexed"] = False
+            # Case 2: Sheet deselected but indexed_sql -> Remove
+            elif not s_info.get("selected") and s_info.get("indexed_sql"):
+                DBService.delete_table(project_name, table_name)
+                s_info["indexed_sql"] = False
                 
         return item
 
     @staticmethod
-    def delete_all_tables_for_item(project_name, item):
-        """Drops all tables associated with an FSDM file item."""
+    def delete_all_tables_for_item(project_name, item, prefix: str):
+        """Drops all tables associated with a file item using the provided prefix."""
         for s_name, s_info in item["sheets"].items():
-            if s_info.get("indexed"):
-                FSDMService.delete_table(project_name, "FSDM/ETL_" + s_name)
+            if s_info.get("indexed_sql"):
+                DBService.delete_table(project_name, prefix + s_name)
+
 
     @staticmethod
     def delete_table(project_name, table_name):
-        """Explicitly drops an FSDM table."""
+        """Explicitly drops a table."""
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -96,23 +94,17 @@ class FSDMService:
         conn.close()
 
     @staticmethod
-    def get_fsdm_schema(project_name):
-        """
-        Returns a JSON-ready map of all uploaded FSDM tables and their column names.
+    def drop_view(project_name: str, view_name: str) -> None:
+        """Drops a SQLite view if it exists.
+
+        This mirrors the ``DROP VIEW IF EXISTS`` logic that was previously
+        inlined in ``app.py`` but centralises it in ``DBService`` so that all
+        database‑modifying operations go through a single, well‑tested utility.
         """
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Get all FSDM tables
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fsdm_etl_%'")
-        tables = cursor.fetchall()
-        
-        schema = {}
-        for table in tables:
-            table_name = table[0]
-            df = pd.read_sql(f"SELECT * FROM '{table_name}' LIMIT 1", conn)
-            schema[table_name] = list(df.columns)
-            
+        cur = conn.cursor()
+        cur.execute(f"DROP VIEW IF EXISTS {view_name}")
+        conn.commit()
         conn.close()
-        return schema
+

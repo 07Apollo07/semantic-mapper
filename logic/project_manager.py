@@ -3,11 +3,16 @@ import shutil
 import json
 import pandas as pd
 from typing import List, Dict, Any, Optional
-import io
-import re # Import re for regex operations
-import sqlite3 # Import sqlite3 for database operations
+import re  # Import re for regex operations
+import sqlite3  # Import sqlite3 for database operations
+from dotenv import load_dotenv
 
-PROJECTS_DIR = "projects"
+# Load variables from a .env file if present (no‑op when the file is absent)
+load_dotenv()
+
+# Load environment variables (including those from a .env file when python‑dotenv is used).
+# The fallback keeps the original relative path for developers who run the code without Docker.
+PROJECTS_DIR = os.getenv("PROJECTS_DIR", "../projects-display")
 
 class ProjectManager:
     @staticmethod
@@ -57,8 +62,8 @@ class ProjectManager:
         return None
 
     @staticmethod
-    def delete_file(project_name: str, filename: str) -> bool:
-        path = os.path.join(PROJECTS_DIR, project_name, "files", filename)
+    def delete_file(project_name: str, filename: str, sub_dir: str = "files") -> bool:
+        path = os.path.join(PROJECTS_DIR, project_name, sub_dir, filename)
         if os.path.exists(path):
             os.remove(path)
             return True
@@ -67,7 +72,8 @@ class ProjectManager:
     @staticmethod
     def save_metadata(project_name: str, metadata: Dict[str, Any]):
         path = os.path.join(PROJECTS_DIR, project_name, "metadata.json")
-        with open(path, "w") as f:
+        # Explicitly specify UTF‑8 encoding for portability
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4)
 
     @staticmethod
@@ -75,7 +81,8 @@ class ProjectManager:
         path = os.path.join(PROJECTS_DIR, project_name, "metadata.json")
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                # Explicitly specify UTF‑8 encoding for portability
+                with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except json.JSONDecodeError:
                 return {}
@@ -130,12 +137,25 @@ class ProjectManager:
                 target_table TEXT,
                 source_info TEXT,
                 target_info TEXT,
+                physical_source_info TEXT,
                 transformation_specs TEXT,
                 fsdm_intent TEXT,
                 fsdm_findings TEXT,
                 fsdm_reasoning TEXT,
                 fsdm_recommended_sources TEXT,
                 fsdm_status TEXT,
+                mapping_status TEXT,
+                transformation_type TEXT,
+                transformation_logic TEXT,
+                reasoning TEXT
+            )
+        """)
+
+        # Create final_mappings_table for batch processing
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS final_mappings_table (
+                table_id TEXT PRIMARY KEY,
+                target_table TEXT,
                 mapping_status TEXT,
                 transformation_type TEXT,
                 transformation_logic TEXT,
@@ -181,8 +201,7 @@ class ProjectManager:
 
     @staticmethod
     def save_mapping_row(project_name: str, row_data: Dict[str, Any]):
-        import sqlite3
-        import json
+        # Use the top‑level imports; no need to re‑import inside the method.
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -419,36 +438,95 @@ class ProjectManager:
             conn.close()
 
     @staticmethod
-    def drop_excel_sheets_from_db(project_name: str, filename: str, sheets_info: Dict[str, Dict[str, Any]]):
-        """Drops SQLite tables corresponding to indexed sheets of a deleted Excel file."""
+    def sync_to_storage(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
+        """
+        Unified sync: Syncs selected Excel sheets to SQLite and Vector Store.
+        """
+        file_bytes = item["bytes"]
+        
+        # 1. Sync to DB
+        item = db_service.sync(project_name, item, prefix)
+        
+        # 2. Sync to Vector Store
+        for s_name, s_info in item["sheets"].items():
+            if s_info.get("selected"):
+                if not s_info.get("indexed_vector", False):
+                    vector_service.add_excel_sheet(item["name"], file_bytes, s_name)
+                    s_info["indexed_vector"] = True
+            else:
+                if s_info.get("indexed_vector", False):
+                    vector_service.remove_source(item["name"], s_name)
+                    s_info["indexed_vector"] = False
+        return item
+
+    @staticmethod
+    def cleanup_resources(project_name: str, item: Dict[str, Any], vector_service, db_service, prefix: str):
+        """Unified cleanup for a deleted file.
+
+        The function is used for both **PDF** and **Excel** items.  PDF items do not
+        contain a ``sheets`` dictionary - they only have ``name``, ``type`` and
+        indexing flags.  Attempting to access ``item["sheets"]`` therefore raises a
+        ``KeyError`` which surfaces in the UI when a PDF is removed.
+
+        The updated implementation:
+
+        * Checks whether the ``sheets`` key exists and is a mapping before
+            invoking any DB-related cleanup.
+        * Performs vector-store cleanup for any existing sheet entries (if
+            present) and finally removes the source entry for the file itself.
+        * Handles the PDF case gracefully by skipping DB cleanup and only
+            removing the vector-store entry for the file.
+        """
+        # --- DB cleanup -----------------------------------------------------
+        # Only Excel items have associated SQLite tables.  Guard against missing
+        # ``sheets`` to avoid ``KeyError`` for PDFs.
+        if isinstance(item.get("sheets"), dict):
+                db_service.delete_all_tables_for_item(project_name, item, prefix)
+
+        # --- Vector store cleanup ------------------------------------------
+        # Remove per‑sheet vectors if any (Excel) and then the file‑level entry.
+        for s_name in item.get("sheets", {}).keys():
+                vector_service.remove_source(item["name"], s_name)
+        # Finally, remove the source entry for the file itself.
+        vector_service.remove_source(item["name"])
+
+    @staticmethod
+    def get_all_batch_mappings(project_name: str) -> List[Dict[str, Any]]:
+        import sqlite3
+        db_path = ProjectManager.get_db_path(project_name)
+        if not os.path.exists(db_path):
+            return []
+            
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM final_mappings_table")
+        rows = cursor.fetchall()
+        
+        results = [dict(row) for row in rows]
+        conn.close()
+        return results
+
+    @staticmethod
+    def save_batch_table_mapping(project_name: str, table_id: str, result_data: Dict[str, Any]):
+        import sqlite3
+        import json
         db_path = ProjectManager.get_db_path(project_name)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        tables_dropped = []
-        for sheet_name, info in sheets_info.items():
-            if info.get("indexed", False): # Only drop if it was indexed (i.e., present in DB)
-                base_table_name = "FSDM/ETL_" + sheet_name
-                # Apply the same sanitization and prefixing as save_df_to_sql
-                sanitized_base = re.sub(r'[^a-zA-Z0-9_]', '_', base_table_name).lower()
-                if sanitized_base.startswith("t_"): # Check if it already has the prefix from save_df_to_sql
-                    actual_table_name = sanitized_base
-                elif sanitized_base[0].isdigit():
-                    actual_table_name = "t_" + sanitized_base
-                else:
-                    actual_table_name = sanitized_base # Should not happen with FSDM/ETL prefix, but for completeness
-                
-                try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {actual_table_name}")
-                    print(f"Dropped table '{actual_table_name}' for sheet '{sheet_name}' from project '{project_name}'.")
-                    tables_dropped.append(actual_table_name)
-                except sqlite3.Error as e:
-                    print(f"Error dropping table '{actual_table_name}' for sheet '{sheet_name}' in project '{project_name}': {e}")
-        
-        if tables_dropped:
-            conn.commit()
-            print(f"Dropped tables: {', '.join(tables_dropped)}")
-        else:
-            print(f"No indexed sheets found for file '{filename}' in project '{project_name}' to drop from DB.")
-        
+        cursor.execute("""
+            INSERT OR REPLACE INTO final_mappings_table (
+                table_id, target_table, mapping_status, transformation_type, transformation_logic, reasoning
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            table_id,
+            result_data.get('target_table'),
+            result_data.get('mapping_status', 'Completed'),
+            result_data.get('transformation_type'),
+            result_data.get('transformation_logic'),
+            result_data.get('reasoning')
+        ))
+        conn.commit()
         conn.close()

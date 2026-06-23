@@ -1,0 +1,33 @@
+# Exclude virtual environment directories
+.venv/
+# Exclude Python cache files
+__pycache__/
+*.pyc
+*.pyo
+# Exclude git metadata
+.git/
+.gitignore
+# Exclude IDE/editor settings
+.vscode/
+.idea/
+# Exclude OS files
+.DS_Store
+# Exclude environment files
+.env
+.env.*
+# Exclude test and build artifacts
+build/
+.dist/
+*.egg-info/
+*.egg
+# Exclude coverage and pytest caches
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+# Exclude Jupyter checkpoints
+.ipynb_checkpoints/
+# Exclude large data directories that will be mounted at runtime
+projects-display/
+# Exclude any other temporary files
+*.log

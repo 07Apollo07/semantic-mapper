@@ -17,11 +17,14 @@ class AppState:
         "step", "kb_inventory", "fsdm_inventory", "mapping_config", "mapping_inventory",
         "logs",
         "base_url", "api_key", "selected_model", "available_models", "agent_mode",
+        "agent_name",
         "map_s_subj", "map_s_db", "map_s_tbl", "map_s_col", "map_s_type",
         "map_t_subj", "map_t_db", "map_t_tbl", "map_t_col", "map_t_type",
+        "map_p_subj", "map_p_db", "map_p_tbl", "map_p_col", "map_p_type",
         "map_trans_type", "map_trans_cond", "map_remarks",
         "map_sheet_selector",
         "auto_scroll", "mapping_active",
+        "processing_mode",
         "selected_target_table", "global_instructions", "preprocessing_active", "preprocessing_idx", "current_mapping_step",
         "selected_mapping_rows",
         "filter_files", "filter_sheets", "filter_tables"
@@ -42,11 +45,14 @@ class AppState:
             "selected_model": "gpt-4o",
             "available_models": [],
             "agent_mode": "One-shot",
+            "agent_name": "DEFAULT",  # New persistent key for selected agent
             "map_s_subj": "", "map_s_db": "", "map_s_tbl": "", "map_s_col": "", "map_s_type": "",
             "map_t_subj": "", "map_t_db": "", "map_t_tbl": "", "map_t_col": "", "map_t_type": "",
+            "map_p_subj": "", "map_p_db": "", "map_p_tbl": "", "map_p_col": "", "map_p_type": "",
             "map_trans_type": "", "map_trans_cond": "", "map_remarks": "",
             "auto_scroll": True,
             "mapping_active": False,
+            "processing_mode": "Row",
             "selected_target_table": None,
             "global_instructions": "",
             "preprocessing_active": False,
@@ -110,7 +116,8 @@ class AppState:
         vs_path = os.path.join(project_path, "vector_store")
         
         st.session_state.v_manager = VectorStoreManager(persist_directory=vs_path)
-        st.session_state.v_manager.initialize_store()
+        # Force a dummy call to ensure it's initialized and not just a state object
+        st.session_state.v_manager.load_model()
 
     def save_project(self):
         if not self.current_project:
@@ -150,6 +157,16 @@ class AppState:
     @agent_mode.setter
     def agent_mode(self, value: str):
         st.session_state["agent_mode"] = value
+        self.save_project()
+
+    @property
+    def agent_name(self) -> str:
+        """Return the currently selected agent name (persisted in session state)."""
+        return st.session_state.get("agent_name", "DEFAULT")
+
+    @agent_name.setter
+    def agent_name(self, value: str):
+        st.session_state["agent_name"] = value
         self.save_project()
 
     @property
@@ -225,8 +242,12 @@ class AppState:
         return st.session_state.v_manager
 
     @property
-    def v_service(self) -> VectorStoreService:
-        return VectorStoreService(self.v_manager)
+    def semantic_service(self) -> VectorStoreService:
+        return VectorStoreService(self.v_manager, collection_name="semantic")
+
+    @property
+    def fsdm_service(self) -> VectorStoreService:
+        return VectorStoreService(self.v_manager, collection_name="fsdm")
 
     @property
     def results(self) -> List[Dict[str, Any]]:
@@ -253,6 +274,15 @@ class AppState:
     @mapping_active.setter
     def mapping_active(self, value: bool):
         st.session_state["mapping_active"] = value
+        self.save_project()
+
+    @property
+    def processing_mode(self) -> str:
+        return st.session_state.get("processing_mode", "Row")
+
+    @processing_mode.setter
+    def processing_mode(self, value: str):
+        st.session_state["processing_mode"] = value
         self.save_project()
 
     @property
@@ -370,6 +400,7 @@ class AppState:
         for k in self.PERSISTENT_KEYS:
             if k.startswith("map_"):
                 st.session_state[k] = ""
+        st.cache_data.clear()
         self.save_project()
 
     def get_llm_config(self) -> Dict[str, Any]:

@@ -28,3 +28,4 @@ sentence-transformers
 pypdf
 torchvision
 openpyxl
+fastmcp-slim[server]

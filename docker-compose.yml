@@ -11,9 +11,14 @@ services:
       - PYTHONUNBUFFERED=1
       - UID=${UID}
       - GID=${GID}
+      # Enable or disable FastMCP server – value taken from .env (mcp_enable)
+      # Pass through the MCP toggle from .env (no host substitution needed)
+      - mcp_enable
     volumes:
       # - .:/app
       # Use the variable defined above; it will be /projects-display unless overridden at run‑time
       - ${HOST_PROJECTS_DIR}:/app/project-display
     ports:
       - "8501:8501"
+      # Expose FastMCP HTTP endpoint when enabled
+      - "8000:8000"

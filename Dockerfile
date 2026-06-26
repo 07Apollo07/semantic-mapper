@@ -10,6 +10,9 @@ WORKDIR /app
 ARG PROJECTS_DIR=/app/project-display
 ENV PROJECTS_DIR=${PROJECTS_DIR}
 
+# Optional MCP enable flag – defaults to disabled. Override via .env or docker‑compose.
+ENV mcp_enable=False
+
 # Ensure the projects directory exists at build time (and will also exist at runtime
 # if the host does not mount a volume over it).
 RUN mkdir -p "$PROJECTS_DIR"
@@ -30,8 +33,12 @@ RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt 
 # Copy the rest of the application code (the .dockerignore will prevent copying .venv and other junk)
 COPY . .
 
-# Expose the default Streamlit port (8501)
-EXPOSE 8501
+# Expose the default Streamlit port (8501) and optional MCP HTTP port (8000)
+EXPOSE 8501 8000
 
-# Default command to run the Streamlit application
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Copy an entrypoint script that will launch Streamlit and optionally the MCP server
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Default command runs the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]
